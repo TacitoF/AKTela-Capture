@@ -32,14 +32,17 @@ internal sealed class MainForm : Form
     private readonly ComboBox _audioCombo = new();
     private readonly ComboBox _cursorCombo = new();
     private readonly CheckBox _minimizeCheck = new();
+    private readonly CheckBox _audioCheck = new();
+    private readonly ComboBox _profileCombo = new();
     private readonly Button _toggle = new();
     private readonly Label _status = new();
+    private readonly Label _statusDetail = new();
     private readonly Panel _dot = new();
     private readonly NotifyIcon _tray = new();
     private readonly Dictionary<string, Button> _presetButtons = new(StringComparer.OrdinalIgnoreCase);
     private Label _outputValue = new(), _fpsValue = new(), _encoderValue = new(), _latencyValue = new();
 
-    private bool _sharing, _connected, _allowClose;
+    private bool _sharing, _connected, _allowClose, _syncingUi;
     private string _preset = "Jogo";
     private CaptureSourceOption? _activeSource;
     private StreamConfig? _activeConfig;
@@ -49,7 +52,7 @@ internal sealed class MainForm : Form
     {
         _cursor = new CursorTracker(_relay);
         Text = "AKTela Capture";
-        ClientSize = new Size(420, 850);
+        ClientSize = new Size(390, 568);
         StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.None;
         BackColor = Bg;
@@ -74,11 +77,11 @@ internal sealed class MainForm : Form
     {
         _relay.ConnectionChanged += v => Ui(() => { _connected = v; RefreshStatus(); });
         _relay.ViewerCountChanged += v => { Ui(RefreshStatus); _ = SyncMediaAsync(v); };
-        _relay.LatencyChanged += ms => Ui(() => _latencyValue.Text = ms <= 0 ? "—" : $"{ms} ms");
+        _relay.LatencyChanged += ms => Ui(() => { _latencyValue.Text = ms <= 0 ? "—" : $"{ms} ms"; RefreshStatusDetail(); });
         _relay.RelayError += _ => Ui(() => { if (_sharing && !_connected) SetStatus("Reconectando ao servidor", Yellow); });
         _video.PacketReady += p => _relay.TryQueuePacket(p);
-        _video.FpsChanged += f => Ui(() => _fpsValue.Text = f <= 0 ? "—" : $"{f:0} FPS");
-        _video.EncoderChanged += e => Ui(() => _encoderValue.Text = ShortEncoder(e));
+        _video.FpsChanged += f => Ui(() => { _fpsValue.Text = f <= 0 ? "—" : $"{f:0} FPS"; RefreshStatusDetail(); });
+        _video.EncoderChanged += e => Ui(() => { _encoderValue.Text = ShortEncoder(e); RefreshStatusDetail(); });
         _video.StreamError += e => Ui(() =>
         {
             SetStatus("Falha no encoder de vídeo", Red);
@@ -90,6 +93,25 @@ internal sealed class MainForm : Form
             SetStatus("Vídeo ativo, áudio indisponível", Yellow);
             MessageBox.Show(this, e, "Áudio do AKTela", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         });
+
+        _profileCombo.SelectedIndexChanged += (_, _) =>
+        {
+            if (_syncingUi || _sharing) return;
+            var name = _profileCombo.SelectedItem?.ToString() ?? "Personalizado";
+            if (name is "Jogo" or "Filme" or "Leve") ApplyPreset(name);
+            else SetPresetVisual("Personalizado");
+        };
+        _audioCheck.CheckedChanged += (_, _) =>
+        {
+            if (_syncingUi || _sharing) return;
+            if (_audioCheck.Checked)
+            {
+                var sourceIsWindow = (_sourceTypeCombo.SelectedItem?.ToString() ?? "Janela") == "Janela";
+                SelectAudio(sourceIsWindow ? AudioCaptureMode.SourceOnly : AudioCaptureMode.SystemWithoutDiscord);
+            }
+            else SelectAudio(AudioCaptureMode.Off);
+            MarkCustomIfUserChanged();
+        };
 
         _sourceTypeCombo.SelectedIndexChanged += (_, _) =>
         {
@@ -111,109 +133,213 @@ internal sealed class MainForm : Form
 
     private void BuildUi()
     {
-        var drag = new Panel { Bounds = new Rectangle(0, 0, 420, 54), BackColor = Bg };
+        var drag = new Panel { Bounds = new Rectangle(0, 0, 390, 52), BackColor = Bg };
         drag.MouseDown += DragWindow;
         Controls.Add(drag);
 
-        var logo = new Panel { Bounds = new Rectangle(20, 14, 30, 30), BackColor = Accent };
-        logo.Paint += (_, e) => TextRenderer.DrawText(e.Graphics, "AK", new Font("Segoe UI", 8.5F, FontStyle.Bold), logo.ClientRectangle, Color.White, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
-        drag.Controls.Add(logo); RoundControl(logo, 9);
-        var title = new Label { Text = "AKTela Capture", AutoSize = true, Font = new Font("Segoe UI Semibold", 11F, FontStyle.Bold), ForeColor = TextMain, Location = new Point(61, 18) };
-        title.MouseDown += DragWindow; drag.Controls.Add(title);
-        var min = TitleButton("—", 343); min.Click += (_, _) => HideToTray(); drag.Controls.Add(min);
-        var close = TitleButton("×", 377); close.Click += (_, _) => HideToTray(); drag.Controls.Add(close);
+        var logo = new Panel { Bounds = new Rectangle(18, 12, 28, 28), BackColor = Accent };
+        logo.Paint += (_, e) => TextRenderer.DrawText(
+            e.Graphics, "AK", new Font("Segoe UI", 8.2F, FontStyle.Bold),
+            logo.ClientRectangle, Color.White,
+            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+        drag.Controls.Add(logo); RoundControl(logo, 8);
 
-        Controls.Add(new Label
+        var title = new Label
         {
-            Text = "Compartilhe sem sair do jogo",
-            Bounds = new Rectangle(28, 66, 364, 30),
-            TextAlign = ContentAlignment.MiddleCenter,
-            Font = new Font("Segoe UI Semibold", 16F, FontStyle.Bold),
-            ForeColor = TextMain
-        });
-        Controls.Add(new Label
-        {
-            Text = "Perfis prontos, áudio sem retorno do Discord e encoder por hardware.",
-            Bounds = new Rectangle(38, 101, 344, 38),
-            TextAlign = ContentAlignment.TopCenter,
-            ForeColor = TextMuted,
-            Font = new Font("Segoe UI", 8.6F)
-        });
+            Text = "AKTela Capture",
+            AutoSize = true,
+            Font = new Font("Segoe UI Semibold", 10.5F, FontStyle.Bold),
+            ForeColor = TextMain,
+            Location = new Point(57, 17)
+        };
+        title.MouseDown += DragWindow;
+        drag.Controls.Add(title);
 
-        var statusCard = CardPanel(30, 145, 360, 50);
+        var options = TitleButton("•••", 286);
+        options.Font = new Font("Segoe UI Semibold", 8F, FontStyle.Bold);
+        options.Click += (_, _) => ShowOptionsMenu(options);
+        drag.Controls.Add(options);
+
+        var min = TitleButton("—", 321);
+        min.Click += (_, _) => HideToTray();
+        drag.Controls.Add(min);
+
+        var close = TitleButton("×", 355);
+        close.Click += (_, _) => HideToTray();
+        drag.Controls.Add(close);
+
+        var statusCard = CardPanel(24, 62, 342, 58);
         Controls.Add(statusCard);
-        _dot.Bounds = new Rectangle(18, 20, 10, 10); _dot.BackColor = TextMuted;
-        _dot.Paint += (_, e) => { using var b = new SolidBrush(_dot.BackColor); e.Graphics.FillEllipse(b, 0, 0, 10, 10); };
+        _dot.Bounds = new Rectangle(16, 17, 9, 9);
+        _dot.BackColor = TextMuted;
+        _dot.Paint += (_, e) =>
+        {
+            using var b = new SolidBrush(_dot.BackColor);
+            e.Graphics.FillEllipse(b, 0, 0, 9, 9);
+        };
         statusCard.Controls.Add(_dot);
-        _status.Text = "Pronto para compartilhar"; _status.AutoSize = true;
-        _status.Font = new Font("Segoe UI Semibold", 9.3F, FontStyle.Bold); _status.ForeColor = TextMain; _status.Location = new Point(38, 16);
+
+        _status.Text = "Pronto para compartilhar";
+        _status.AutoSize = true;
+        _status.Font = new Font("Segoe UI Semibold", 9.2F, FontStyle.Bold);
+        _status.ForeColor = TextMain;
+        _status.Location = new Point(36, 11);
         statusCard.Controls.Add(_status);
 
-        LabelAt("Código da Activity", 31, 211);
-        _roomCodeBox.Bounds = new Rectangle(30, 234, 360, 32);
-        _roomCodeBox.BackColor = Surface2; _roomCodeBox.ForeColor = TextMain; _roomCodeBox.BorderStyle = BorderStyle.FixedSingle;
-        _roomCodeBox.CharacterCasing = CharacterCasing.Upper; _roomCodeBox.MaxLength = 6; _roomCodeBox.TextAlign = HorizontalAlignment.Center;
-        _roomCodeBox.Font = new Font("Consolas", 13F, FontStyle.Bold); Controls.Add(_roomCodeBox);
+        _statusDetail.Text = "Configure a transmissão e clique em iniciar";
+        _statusDetail.AutoSize = true;
+        _statusDetail.Font = new Font("Segoe UI", 7.8F);
+        _statusDetail.ForeColor = TextMuted;
+        _statusDetail.Location = new Point(36, 33);
+        statusCard.Controls.Add(_statusDetail);
 
-        LabelAt("Perfil", 31, 282);
-        var presetX = 30;
-        foreach (var name in new[] { "Jogo", "Filme", "Leve", "Personalizado" })
-        {
-            var width = name == "Personalizado" ? 112 : 78;
-            var b = new Button
-            {
-                Text = name,
-                Bounds = new Rectangle(presetX, 305, width, 34),
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Surface2,
-                ForeColor = TextMuted,
-                Cursor = Cursors.Hand,
-                Font = new Font("Segoe UI Semibold", 8.4F, FontStyle.Bold),
-                TabStop = false
-            };
-            b.FlatAppearance.BorderSize = 0;
-            b.Click += (_, _) => ApplyPreset(name);
-            Controls.Add(b); RoundControl(b, 9); _presetButtons[name] = b;
-            presetX += width + 6;
-        }
+        LabelAt("Código da Activity", 25, 137);
+        _roomCodeBox.Bounds = new Rectangle(24, 159, 342, 34);
+        _roomCodeBox.BackColor = Surface2;
+        _roomCodeBox.ForeColor = TextMain;
+        _roomCodeBox.BorderStyle = BorderStyle.FixedSingle;
+        _roomCodeBox.CharacterCasing = CharacterCasing.Upper;
+        _roomCodeBox.MaxLength = 6;
+        _roomCodeBox.TextAlign = HorizontalAlignment.Center;
+        _roomCodeBox.Font = new Font("Segoe UI Semibold", 11.5F, FontStyle.Bold);
+        Controls.Add(_roomCodeBox);
 
-        LabelAt("Fonte", 31, 354);
-        _sourceTypeCombo.Bounds = new Rectangle(30, 377, 118, 31); StyleCombo(_sourceTypeCombo);
-        _sourceTypeCombo.Items.AddRange(["Tela", "Janela"]); Controls.Add(_sourceTypeCombo);
-        _sourceCombo.Bounds = new Rectangle(155, 377, 165, 31); StyleCombo(_sourceCombo); Controls.Add(_sourceCombo);
-        var refresh = new Button { Text = "Atualizar", Bounds = new Rectangle(327, 377, 63, 31), BackColor = Surface2, ForeColor = TextMain, FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand, Font = new Font("Segoe UI Semibold", 7.6F, FontStyle.Bold), TabStop = false };
-        refresh.FlatAppearance.BorderSize = 0; refresh.Click += (_, _) => LoadSources(); Controls.Add(refresh); RoundControl(refresh, 8);
+        LabelAt("Modo", 25, 210);
+        LabelAt("Qualidade", 202, 210);
 
-        LabelAt("Qualidade", 31, 424);
-        _qualityCombo.Bounds = new Rectangle(30, 447, 360, 31); StyleCombo(_qualityCombo);
+        _profileCombo.Bounds = new Rectangle(24, 232, 160, 32);
+        StyleCombo(_profileCombo);
+        _profileCombo.Items.AddRange(["Jogo", "Filme", "Leve", "Personalizado"]);
+        Controls.Add(_profileCombo);
+
+        _qualityCombo.Bounds = new Rectangle(201, 232, 165, 32);
+        StyleCombo(_qualityCombo);
         foreach (var q in QualityOption.All) _qualityCombo.Items.Add(q);
         Controls.Add(_qualityCombo);
 
-        LabelAt("Áudio", 31, 494);
-        _audioCombo.Bounds = new Rectangle(30, 517, 360, 31); StyleCombo(_audioCombo); Controls.Add(_audioCombo);
-        Controls.Add(new Label
+        LabelAt("Compartilhar", 25, 282);
+        _sourceTypeCombo.Bounds = new Rectangle(24, 304, 96, 32);
+        StyleCombo(_sourceTypeCombo);
+        _sourceTypeCombo.Items.AddRange(["Tela", "Janela"]);
+        Controls.Add(_sourceTypeCombo);
+
+        _sourceCombo.Bounds = new Rectangle(127, 304, 202, 32);
+        StyleCombo(_sourceCombo);
+        Controls.Add(_sourceCombo);
+
+        var refresh = new Button
         {
-            Text = "O modo recomendado remove as vozes do Discord da transmissão.",
-            Bounds = new Rectangle(31, 553, 358, 24), ForeColor = TextMuted, Font = new Font("Segoe UI", 7.8F)
+            Text = "↻",
+            Bounds = new Rectangle(336, 304, 30, 32),
+            BackColor = Surface2,
+            ForeColor = TextMuted,
+            FlatStyle = FlatStyle.Flat,
+            Cursor = Cursors.Hand,
+            Font = new Font("Segoe UI Symbol", 11F),
+            TabStop = false
+        };
+        refresh.FlatAppearance.BorderSize = 0;
+        refresh.Click += (_, _) => LoadSources();
+        Controls.Add(refresh);
+        RoundControl(refresh, 8);
+
+        var audioRow = CardPanel(24, 354, 342, 58);
+        Controls.Add(audioRow);
+        _audioCheck.Text = "Compartilhar áudio";
+        _audioCheck.AutoSize = true;
+        _audioCheck.ForeColor = TextMain;
+        _audioCheck.BackColor = Surface;
+        _audioCheck.Font = new Font("Segoe UI Semibold", 9F, FontStyle.Bold);
+        _audioCheck.Location = new Point(14, 10);
+        audioRow.Controls.Add(_audioCheck);
+        audioRow.Controls.Add(new Label
+        {
+            Text = "O áudio do Discord é removido automaticamente.",
+            AutoSize = true,
+            ForeColor = TextMuted,
+            BackColor = Surface,
+            Font = new Font("Segoe UI", 7.6F),
+            Location = new Point(15, 34)
         });
 
-        LabelAt("Cursor", 31, 581);
-        _cursorCombo.Bounds = new Rectangle(30, 604, 360, 31); StyleCombo(_cursorCombo);
-        _cursorCombo.Items.AddRange(["Automático", "Mostrar", "Ocultar"]); Controls.Add(_cursorCombo);
+        // Controles internos: continuam existindo para preservar a lógica,
+        // mas as opções técnicas ficam fora da interface principal.
+        _audioCombo.Visible = false;
+        _cursorCombo.Visible = false;
+        _cursorCombo.Items.AddRange(["Automático", "Mostrar", "Ocultar"]);
 
-        var live = CardPanel(30, 653, 360, 70); Controls.Add(live);
-        AddMetric(live, "Saída", "—", 13, 9, out _outputValue);
-        AddMetric(live, "Captura", "—", 99, 9, out _fpsValue);
-        AddMetric(live, "Encoder", "—", 190, 9, out _encoderValue);
-        AddMetric(live, "Rede", "—", 289, 9, out _latencyValue);
+        _toggle.Bounds = new Rectangle(24, 432, 342, 56);
+        _toggle.Text = "Iniciar transmissão";
+        _toggle.BackColor = Accent;
+        _toggle.ForeColor = Color.White;
+        _toggle.FlatStyle = FlatStyle.Flat;
+        _toggle.FlatAppearance.BorderSize = 0;
+        _toggle.Font = new Font("Segoe UI Semibold", 10.2F, FontStyle.Bold);
+        _toggle.Cursor = Cursors.Hand;
+        _toggle.Click += async (_, _) => await ToggleAsync();
+        Controls.Add(_toggle);
+        RoundControl(_toggle, 13);
 
-        _toggle.Bounds = new Rectangle(30, 741, 360, 60); _toggle.Text = "Iniciar transmissão";
-        _toggle.BackColor = Accent; _toggle.ForeColor = Color.White; _toggle.FlatStyle = FlatStyle.Flat; _toggle.FlatAppearance.BorderSize = 0;
-        _toggle.Font = new Font("Segoe UI Semibold", 10.6F, FontStyle.Bold); _toggle.Cursor = Cursors.Hand;
-        _toggle.Click += async (_, _) => await ToggleAsync(); Controls.Add(_toggle); RoundControl(_toggle, 14);
+        Controls.Add(new Label
+        {
+            Text = "Cursor automático: visível no desktop e oculto no modo Jogo.",
+            Bounds = new Rectangle(24, 504, 342, 20),
+            TextAlign = ContentAlignment.MiddleCenter,
+            ForeColor = TextMuted,
+            Font = new Font("Segoe UI", 7.6F)
+        });
+        Controls.Add(new Label
+        {
+            Text = "Ctrl + Shift + S inicia ou encerra",
+            Bounds = new Rectangle(24, 529, 342, 18),
+            TextAlign = ContentAlignment.MiddleCenter,
+            ForeColor = Color.FromArgb(116, 122, 136),
+            Font = new Font("Segoe UI", 7.2F)
+        });
 
-        _minimizeCheck.Text = "Minimizar após iniciar"; _minimizeCheck.AutoSize = true; _minimizeCheck.ForeColor = TextMuted; _minimizeCheck.BackColor = Bg; _minimizeCheck.Location = new Point(31, 817); Controls.Add(_minimizeCheck);
-        Controls.Add(new Label { Text = "Ctrl + Shift + S inicia ou encerra", AutoSize = true, ForeColor = TextMuted, Location = new Point(218, 819), Font = new Font("Segoe UI", 7.8F) });
+        _minimizeCheck.Visible = false;
+    }
+
+    private void ShowOptionsMenu(Control anchor)
+    {
+        var menu = new ContextMenuStrip
+        {
+            BackColor = Surface2,
+            ForeColor = TextMain,
+            ShowImageMargin = false,
+            Renderer = new ToolStripProfessionalRenderer()
+        };
+
+        var cursorMenu = new ToolStripMenuItem("Cursor") { ForeColor = TextMain };
+        foreach (var item in new[] { "Automático", "Mostrar", "Ocultar" })
+        {
+            var entry = new ToolStripMenuItem(item)
+            {
+                Checked = string.Equals(_cursorCombo.SelectedItem?.ToString(), item, StringComparison.OrdinalIgnoreCase),
+                CheckOnClick = false
+            };
+            entry.Click += (_, _) =>
+            {
+                _cursorCombo.SelectedItem = item;
+                SetPresetVisual("Personalizado");
+            };
+            cursorMenu.DropDownItems.Add(entry);
+        }
+
+        var minimize = new ToolStripMenuItem("Minimizar após iniciar")
+        {
+            Checked = _minimizeCheck.Checked,
+            CheckOnClick = true
+        };
+        minimize.CheckedChanged += (_, _) => _minimizeCheck.Checked = minimize.Checked;
+
+        var shortcut = new ToolStripMenuItem("Atalho: Ctrl + Shift + S") { Enabled = false };
+
+        menu.Items.Add(cursorMenu);
+        menu.Items.Add(minimize);
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(shortcut);
+        menu.Show(anchor, new Point(anchor.Width - menu.Width, anchor.Height));
     }
 
     private void RestoreSettings()
@@ -229,6 +355,7 @@ internal sealed class MainForm : Form
         PopulateAudioOptions(preferRecommended: false);
         SelectAudioFromSettings();
         SetPresetVisual(_settings.Preset is "Jogo" or "Filme" or "Leve" or "Personalizado" ? _settings.Preset : "Jogo");
+        _audioCheck.Checked = (_audioCombo.SelectedItem as AudioOption)?.Mode != AudioCaptureMode.Off;
     }
 
     private void ApplyPreset(string name)
@@ -262,7 +389,7 @@ internal sealed class MainForm : Form
     {
         if (_sharing || !IsHandleCreated || _preset == "Personalizado") return;
         // Mudanças manuais fora da aplicação de um preset passam a ser Personalizado.
-        if (Focused || _sourceTypeCombo.Focused || _qualityCombo.Focused || _audioCombo.Focused || _cursorCombo.Focused)
+        if (Focused || _sourceTypeCombo.Focused || _qualityCombo.Focused || _audioCheck.Focused || _audioCombo.Focused || _cursorCombo.Focused)
             SetPresetVisual("Personalizado");
     }
 
@@ -275,6 +402,14 @@ internal sealed class MainForm : Form
             kv.Value.BackColor = selected ? Accent : Surface2;
             kv.Value.ForeColor = selected ? Color.White : TextMuted;
         }
+
+        _syncingUi = true;
+        try
+        {
+            if (_profileCombo.Items.Contains(name))
+                _profileCombo.SelectedItem = name;
+        }
+        finally { _syncingUi = false; }
     }
 
     private void SelectQuality(string key)
@@ -345,9 +480,10 @@ internal sealed class MainForm : Form
         _audioCombo.Items.Add(new AudioOption(AudioCaptureMode.SystemAll, "Sistema inteiro · pode incluir vozes do Discord"));
         _audioCombo.Items.Add(new AudioOption(AudioCaptureMode.Off, "Sem áudio"));
 
-        var target = preferRecommended
-            ? (sourceIsWindow ? AudioCaptureMode.SourceOnly : AudioCaptureMode.SystemWithoutDiscord)
-            : current ?? (sourceIsWindow ? AudioCaptureMode.SourceOnly : AudioCaptureMode.SystemWithoutDiscord);
+        var recommended = sourceIsWindow ? AudioCaptureMode.SourceOnly : AudioCaptureMode.SystemWithoutDiscord;
+        var target = current == AudioCaptureMode.Off
+            ? AudioCaptureMode.Off
+            : preferRecommended ? recommended : current ?? recommended;
         SelectAudio(target);
     }
 
@@ -367,7 +503,13 @@ internal sealed class MainForm : Form
     {
         var option = _audioCombo.Items.Cast<AudioOption>().FirstOrDefault(x => x.Mode == mode)
                      ?? _audioCombo.Items.Cast<AudioOption>().FirstOrDefault();
-        if (option is not null) _audioCombo.SelectedItem = option;
+        if (option is not null)
+        {
+            _audioCombo.SelectedItem = option;
+            _syncingUi = true;
+            try { _audioCheck.Checked = option.Mode != AudioCaptureMode.Off; }
+            finally { _syncingUi = false; }
+        }
     }
 
     private async Task ToggleAsync()
@@ -475,7 +617,7 @@ internal sealed class MainForm : Form
         _connected = false; _activeSource = null; _activeConfig = null;
         LockInputs(false); _toggle.Text = "Iniciar transmissão"; _toggle.BackColor = Accent;
         _outputValue.Text = "—"; _fpsValue.Text = "—"; _encoderValue.Text = "—"; _latencyValue.Text = "—";
-        SetStatus("Pronto para compartilhar", TextMuted); _toggle.Enabled = true;
+        SetStatus("Pronto para compartilhar", TextMuted); _statusDetail.Text = "Configure a transmissão e clique em iniciar"; _toggle.Enabled = true;
     }
 
     private void SaveSettings(string room, QualityOption quality, AudioCaptureMode audioMode, string cursorPolicy)
@@ -498,23 +640,47 @@ internal sealed class MainForm : Form
 
     private void RefreshStatus()
     {
-        if (!_sharing) { SetStatus("Pronto para compartilhar", TextMuted); return; }
-        if (!_connected) { SetStatus("Conectando ao servidor", Yellow); return; }
-        if (_relay.ViewerCount == 0) { SetStatus("Ligado · aguardando espectador", Green); return; }
-        var network = _relay.LatencyMs switch
+        if (!_sharing)
         {
-            <= 0 => "",
-            < 90 => " · conexão excelente",
-            < 160 => " · conexão boa",
-            _ => " · conexão instável"
-        };
-        SetStatus($"Ao vivo · {_relay.ViewerCount} assistindo{network}", _relay.LatencyMs >= 160 ? Yellow : Green);
+            SetStatus("Pronto para compartilhar", TextMuted);
+            _statusDetail.Text = "Configure a transmissão e clique em iniciar";
+            return;
+        }
+        if (!_connected)
+        {
+            SetStatus("Conectando ao servidor", Yellow);
+            _statusDetail.Text = "Preparando uma conexão de baixa latência";
+            return;
+        }
+        if (_relay.ViewerCount == 0)
+        {
+            SetStatus("Ligado · aguardando espectador", Green);
+            RefreshStatusDetail();
+            return;
+        }
+
+        SetStatus($"Ao vivo · {_relay.ViewerCount} assistindo", _relay.LatencyMs >= 160 ? Yellow : Green);
+        RefreshStatusDetail();
+    }
+
+    private void RefreshStatusDetail()
+    {
+        if (!_sharing) return;
+        var parts = new List<string>();
+        if (_activeConfig is not null)
+            parts.Add($"{_activeConfig.ResolutionLabel} · {_activeConfig.Fps} FPS");
+        if (_encoderValue.Text is not "—" and not "")
+            parts.Add(_encoderValue.Text);
+        if (_relay.LatencyMs > 0)
+            parts.Add($"{_relay.LatencyMs} ms");
+        _statusDetail.Text = parts.Count > 0 ? string.Join("  ·  ", parts) : "Transmissão pronta";
     }
 
     private void LockInputs(bool locked)
     {
         _roomCodeBox.Enabled = !locked; _sourceTypeCombo.Enabled = !locked; _sourceCombo.Enabled = !locked;
         _qualityCombo.Enabled = !locked; _audioCombo.Enabled = !locked; _cursorCombo.Enabled = !locked;
+        _profileCombo.Enabled = !locked; _audioCheck.Enabled = !locked;
         foreach (var button in _presetButtons.Values) button.Enabled = !locked;
     }
 

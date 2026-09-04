@@ -1,31 +1,24 @@
-# AKTela Capture v0.4.1
+# AKTela Capture v0.5
 
-Correção de compatibilidade com NAudio 3.0.1: `BufferedWaveProvider.BufferDuration` passou a ser somente leitura. O buffer usa o valor padrão da biblioteca; o encoder continua consumindo áudio em blocos de 20 ms, então isso não adiciona 5 s de latência.
+Versão focada em simplificar a interface e corrigir a escala do cursor remoto.
 
-# AKTela Capture v0.4
+## Interface
 
-Versão focada em usabilidade, baixa latência e áudio correto para uso junto ao Discord.
+- Janela compacta e mais curta.
+- A tela principal mostra apenas: código, modo, qualidade, fonte, áudio e iniciar/encerrar.
+- Opções menos usadas (cursor, minimizar e atalho) ficam no menu de três pontos.
+- Áudio é uma única opção; internamente o AKTela escolhe a captura recomendada:
+  - janela: apenas o áudio do aplicativo;
+  - tela: sistema sem a árvore de processos do Discord.
+- Status ao vivo consolidado em uma única faixa.
 
-## Novidades
+## Cursor
 
-- Perfis: Jogo, Filme, Leve e Personalizado.
-- Qualidades: 720p30, 720p60, 1080p30 e 1080p60.
-- Fonte: tela inteira ou janela/jogo específico.
-- Cursor separado do vídeo: Automático, Mostrar ou Ocultar. No perfil Jogo, Automático oculta o cursor.
-- Áudio por aplicativo usando WASAPI process loopback.
-  - Janela: captura somente o áudio do aplicativo selecionado.
-  - Tela: pode capturar todo o sistema excluindo a árvore de processos do Discord.
-  - Isso evita retransmitir para os espectadores as vozes da call do Discord.
-- Indicador de latência do relay.
-- Preserva configurações entre execuções.
-- Atalho global Ctrl + Shift + S para iniciar/encerrar.
-- Minimização automática para a bandeja.
-- Encoder por hardware continua priorizado.
+- Automático continua ocultando o cursor no modo Jogo.
+- Em outros modos o cursor é enviado separadamente.
+- O Capture agora lê tamanho e hotspot do cursor atual do Windows e envia proporções normalizadas.
+- A Activity v0.5 usa essas proporções para desenhar o cursor no tamanho relativo correto ao vídeo.
 
 ## Build
 
-O workflow `.github/workflows/build-windows.yml` usa .NET 9 e gera um executável self-contained para Windows x64.
-
-## Observação
-
-O áudio por processo usa APIs modernas do Windows. A versão é destinada a Windows 10/11 recentes; Windows 11 é o alvo recomendado.
+O workflow `.github/workflows/build-windows.yml` usa .NET 9 e gera `AKTela-Capture-v0.5-Windows-x64`.
