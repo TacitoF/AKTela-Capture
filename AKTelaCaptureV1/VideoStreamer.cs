@@ -119,7 +119,7 @@ internal sealed class VideoStreamer : IAsyncDisposable
     private static void Nvenc(ProcessStartInfo p, StreamConfig cfg)
     {
         var buf = Math.Max(160, cfg.BitrateMbps * 1000 / Math.Max(1, cfg.Fps));
-        Add(p, "-c:v", "h264_nvenc", "-preset", cfg.Fps >= 60 ? "p3" : "p4", "-tune", "ull", "-rc", "cbr", "-b:v", $"{cfg.BitrateMbps}M", "-maxrate", $"{cfg.BitrateMbps}M", "-bufsize", $"{buf}k", "-bf", "0", "-rc-lookahead", "0", "-zerolatency", "1", "-g", cfg.Fps.ToString(), "-profile:v", "high", "-r:v", cfg.Fps.ToString(), "-fps_mode", "cfr", "-bsf:v", "h264_metadata=aud=insert", "-flush_packets", "1", "-f", "h264", "pipe:1");
+        Add(p, "-c:v", "h264_nvenc", "-preset", cfg.Fps >= 60 ? "p3" : "p4", "-tune", "ull", "-rc", "cbr", "-b:v", $"{cfg.BitrateMbps}M", "-maxrate", $"{cfg.BitrateMbps}M", "-bufsize", $"{buf}k", "-bf", "0", "-rc-lookahead", "0", "-zerolatency", "1", "-g", cfg.Fps.ToString(), "-profile:v", "high", "-level:v", "4.2", "-r:v", cfg.Fps.ToString(), "-fps_mode", "cfr", "-bsf:v", "h264_metadata=aud=insert", "-flush_packets", "1", "-f", "h264", "pipe:1");
     }
     private static void Mf(ProcessStartInfo p, StreamConfig cfg)
     {

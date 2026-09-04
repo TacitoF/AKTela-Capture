@@ -1,14 +1,14 @@
-# AKTela Capture — Clean v1.1
+# AKTela Capture v1.2
 
-Esta versão usa uma pasta de projeto nova (`AKTelaCaptureV1`) e uma lista explícita de arquivos C# no `.csproj`.
-Assim, arquivos antigos que ainda estejam no repositório não são compilados e não podem causar classes duplicadas.
+Correções desta versão:
+- texto do código permanece visível durante a transmissão;
+- contraste maior em rótulos e controles;
+- comboboxes desenhados com cores próprias;
+- botões não dependem das cores padrão do Windows;
+- fila do relay reduzida para controlar atraso acumulado;
+- keep-alive do WebSocket;
+- H.264 NVENC fixa level 4.2; a Activity v1.1 também detecta o codec real pelo SPS.
 
-Relay: `wss://aktela-relay.tacito1-filho.workers.dev/ws`
-
-## Estrutura que deve ser enviada ao GitHub
-
+Estrutura:
 - `.github/workflows/build-windows.yml`
 - `AKTelaCaptureV1/`
-- `README.md`
-
-A pasta antiga `AKTelaCapture/` pode permanecer temporariamente no repositório; o novo workflow não a usa.

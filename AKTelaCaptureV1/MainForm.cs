@@ -15,6 +15,7 @@ internal sealed class MainForm : Form
     private readonly TextBox _code = new();
     private readonly CheckBox _audioCheck = new();
     private readonly Button _start = new();
+    private readonly Button _paste = new();
     private readonly Label _status = new();
     private readonly Label _detail = new();
     private readonly NotifyIcon _tray = new();
@@ -34,7 +35,7 @@ internal sealed class MainForm : Form
     private static readonly Color Surface = Color.FromArgb(16, 23, 35);
     private static readonly Color Surface2 = Color.FromArgb(22, 33, 50);
     private static readonly Color TextColor = Color.FromArgb(239, 243, 250);
-    private static readonly Color Muted = Color.FromArgb(145, 158, 179);
+    private static readonly Color Muted = Color.FromArgb(184, 194, 211);
     private static readonly Color Accent = Color.FromArgb(50, 190, 236);
     private static readonly Color Red = Color.FromArgb(245, 85, 105);
     private static readonly Color Green = Color.FromArgb(61, 211, 157);
@@ -107,16 +108,16 @@ internal sealed class MainForm : Form
 
         Label("Código da Activity", 20, 153);
 
-        _code.Bounds = new Rectangle(20, 174, 390, 38);
+        _code.Bounds = new Rectangle(20, 174, 296, 38);
+        _code.CharacterCasing = CharacterCasing.Upper;
+        _code.MaxLength = 6;
+        _code.Font = new Font("Consolas", 11f, FontStyle.Bold);
         StyleText(_code);
 
-        var paste = new Button
-        {
-            Text = "Colar",
-            Bounds = new Rectangle(328, 177, 78, 32)
-        };
-        StyleButton(paste, Surface2);
-        paste.Click += (_, _) =>
+        _paste.Text = "Colar";
+        _paste.Bounds = new Rectangle(324, 174, 86, 38);
+        StyleButton(_paste, Surface2);
+        _paste.Click += (_, _) =>
         {
             try
             {
@@ -126,7 +127,7 @@ internal sealed class MainForm : Form
             {
             }
         };
-        Controls.Add(paste);
+        Controls.Add(_paste);
 
         Label("Modo", 20, 231);
 
@@ -181,7 +182,8 @@ internal sealed class MainForm : Form
             Bounds = new Rectangle(x, y, 125, 38)
         };
         StyleButton(b, Surface2);
-        b.Click += (_, _) => ApplyPreset(preset);
+        b.Font = new Font("Segoe UI Variable Text", 9f, FontStyle.Bold);
+        b.Click += (_, _) => { if (!_sharing) ApplyPreset(preset); };
         return b;
     }
 
@@ -457,11 +459,16 @@ internal sealed class MainForm : Form
 
     private void Lock(bool locked)
     {
-        _code.Enabled = !locked;
+        _code.ReadOnly = locked;
+        _code.TabStop = !locked;
+        _paste.Enabled = !locked;
+
         _quality.Enabled = !locked;
         _sourceType.Enabled = !locked;
         _source.Enabled = !locked;
-        _audioCheck.Enabled = !locked;
+
+        _audioCheck.AutoCheck = !locked;
+        _audioCheck.ForeColor = TextColor;
     }
 
     private void BuildTray()
@@ -560,12 +567,28 @@ internal sealed class MainForm : Form
         c.BackColor = Surface2;
         c.ForeColor = TextColor;
         c.Font = new Font("Segoe UI Variable Text", 9f);
+        c.DrawMode = DrawMode.OwnerDrawFixed;
+        c.ItemHeight = 24;
+        c.DrawItem += (_, e) =>
+        {
+            if (e.Index < 0)
+                return;
+
+            using var bg = new SolidBrush(Surface2);
+            using var fg = new SolidBrush(TextColor);
+            e.Graphics.FillRectangle(bg, e.Bounds);
+            var text = c.Items[e.Index]?.ToString() ?? string.Empty;
+            e.Graphics.DrawString(text, c.Font, fg, e.Bounds.Left + 6, e.Bounds.Top + 3);
+        };
     }
 
     private static void StyleButton(Button b, Color color)
     {
+        b.UseVisualStyleBackColor = false;
         b.FlatStyle = FlatStyle.Flat;
         b.FlatAppearance.BorderSize = 0;
+        b.FlatAppearance.MouseOverBackColor = ControlPaint.Light(color, 0.08f);
+        b.FlatAppearance.MouseDownBackColor = ControlPaint.Dark(color, 0.06f);
         b.BackColor = color;
         b.ForeColor = TextColor;
         b.Cursor = Cursors.Hand;

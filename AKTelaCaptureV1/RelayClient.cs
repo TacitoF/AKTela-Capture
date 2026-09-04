@@ -23,7 +23,7 @@ internal sealed class RelayClient : IAsyncDisposable
         _config = config;
         try { using var health = await Http.GetAsync(RelayHealth); health.EnsureSuccessStatusCode(); }
         catch (Exception ex) { throw new InvalidOperationException("O relay Cloudflare não respondeu. " + ex.Message); }
-        _queue = Channel.CreateBounded<(byte[], WebSocketMessageType)>(new BoundedChannelOptions(32) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true, SingleWriter = false });
+        _queue = Channel.CreateBounded<(byte[], WebSocketMessageType)>(new BoundedChannelOptions(12) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true, SingleWriter = false });
         _cts = new CancellationTokenSource(); _task = Task.Run(() => Run(_cts.Token));
     }
 
@@ -41,7 +41,7 @@ internal sealed class RelayClient : IAsyncDisposable
     {
         while (!token.IsCancellationRequested)
         {
-            using var ws = new ClientWebSocket(); using var linked = CancellationTokenSource.CreateLinkedTokenSource(token);
+            using var ws = new ClientWebSocket(); ws.Options.KeepAliveInterval = TimeSpan.FromSeconds(15); using var linked = CancellationTokenSource.CreateLinkedTokenSource(token);
             try
             {
                 await ws.ConnectAsync(new Uri($"{RelayWs}?role=publisher&room={Uri.EscapeDataString(_room)}"), token);
@@ -51,7 +51,12 @@ internal sealed class RelayClient : IAsyncDisposable
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
             catch (Exception ex) { Error?.Invoke(ex.Message); }
-            finally { ConnectionChanged?.Invoke(false); }
+            finally
+            {
+                Interlocked.Exchange(ref _viewers, 0);
+                ViewerCountChanged?.Invoke(0);
+                ConnectionChanged?.Invoke(false);
+            }
             if (!token.IsCancellationRequested) try { await Task.Delay(1000, token); } catch { break; }
         }
     }
