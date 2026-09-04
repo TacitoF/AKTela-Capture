@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using ScreenCapture.NET;
+using HPPH;
 
 namespace AKTelaCapture;
 
