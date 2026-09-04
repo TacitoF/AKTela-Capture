@@ -8,15 +8,11 @@ on:
       - 'AKTelaCaptureV1/**'
       - '.github/workflows/build-windows.yml'
 
-permissions:
-  contents: read
-
 jobs:
   build:
     runs-on: windows-latest
-
     steps:
-      - name: Baixar o código
+      - name: Baixar código
         uses: actions/checkout@v4
 
       - name: Instalar .NET 9
@@ -24,15 +20,30 @@ jobs:
         with:
           dotnet-version: '9.0.x'
 
+      - name: Limpar artefatos antigos
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force publish -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force AKTelaCaptureV1/bin -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force AKTelaCaptureV1/obj -ErrorAction SilentlyContinue
+
       - name: Restaurar dependências
         run: dotnet restore AKTelaCaptureV1/AKTelaCapture.csproj
 
       - name: Gerar executável Windows x64
-        run: dotnet publish AKTelaCaptureV1/AKTelaCapture.csproj -c Release -r win-x64 -o publish
+        run: dotnet publish AKTelaCaptureV1/AKTelaCapture.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish
+
+      - name: Conferir executável
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem publish -Filter '*.exe' | Select-Object -First 1
+          if (-not $exe) { throw 'Executável não encontrado' }
+          if ($exe.Name -ne 'AKTela Capture.exe') { Rename-Item $exe.FullName 'AKTela Capture.exe' }
+          Get-Item 'publish/AKTela Capture.exe' | Format-List Name,Length,LastWriteTime
 
       - name: Publicar artefato
         uses: actions/upload-artifact@v4
         with:
-          name: AKTela-Capture-v1.1-Windows-x64
-          path: publish/
+          name: AKTela-Capture-v1.2-Windows-x64
+          path: publish/AKTela Capture.exe
           if-no-files-found: error
