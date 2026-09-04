@@ -42,7 +42,8 @@ internal sealed class VideoStreamer : IAsyncDisposable
                 ("NVENC · D3D11 compatível", BuildDdaNvenc(ffmpeg, source, cfg, false)),
                 ("Media Foundation · D3D11", BuildDdaMf(ffmpeg, source, cfg)),
                 ("NVENC · compatibilidade", BuildGdiNvenc(ffmpeg, source, cfg)),
-                ("Media Foundation · compatibilidade", BuildGdiMf(ffmpeg, source, cfg))
+                ("Media Foundation · compatibilidade", BuildGdiMf(ffmpeg, source, cfg)),
+                ("Software H.264 · compatibilidade", BuildGdiX264(ffmpeg, source, cfg))
             };
             var errors = new List<string>();
             foreach (var attempt in attempts)
@@ -116,15 +117,33 @@ internal sealed class VideoStreamer : IAsyncDisposable
         return (w, h);
     }
 
+    private static string H264Level(StreamConfig cfg)
+    {
+        if (cfg.Width >= 1900 && cfg.Fps > 30) return "4.2";
+        if (cfg.Width >= 1280 && cfg.Fps > 30) return "4.0";
+        if (cfg.Width >= 1900 || cfg.Height >= 1000) return "4.0";
+        return "3.1";
+    }
+
     private static void Nvenc(ProcessStartInfo p, StreamConfig cfg)
     {
         var buf = Math.Max(160, cfg.BitrateMbps * 1000 / Math.Max(1, cfg.Fps));
-        Add(p, "-c:v", "h264_nvenc", "-preset", cfg.Fps >= 60 ? "p3" : "p4", "-tune", "ull", "-rc", "cbr", "-b:v", $"{cfg.BitrateMbps}M", "-maxrate", $"{cfg.BitrateMbps}M", "-bufsize", $"{buf}k", "-bf", "0", "-rc-lookahead", "0", "-zerolatency", "1", "-g", cfg.Fps.ToString(), "-profile:v", "high", "-level:v", "4.2", "-r:v", cfg.Fps.ToString(), "-fps_mode", "cfr", "-bsf:v", "h264_metadata=aud=insert", "-flush_packets", "1", "-f", "h264", "pipe:1");
+        Add(p, "-c:v", "h264_nvenc", "-preset", cfg.Fps >= 60 ? "p3" : "p4", "-tune", "ull", "-rc", "cbr",
+            "-b:v", $"{cfg.BitrateMbps}M", "-maxrate", $"{cfg.BitrateMbps}M", "-bufsize", $"{buf}k",
+            "-bf", "0", "-rc-lookahead", "0", "-zerolatency", "1", "-g", cfg.Fps.ToString(),
+            "-profile:v", "baseline", "-level:v", H264Level(cfg),
+            "-r:v", cfg.Fps.ToString(), "-fps_mode", "cfr",
+            "-bsf:v", "h264_metadata=aud=insert", "-flush_packets", "1", "-f", "h264", "pipe:1");
     }
+
     private static void Mf(ProcessStartInfo p, StreamConfig cfg)
     {
         var buf = Math.Max(160, cfg.BitrateMbps * 1000 / Math.Max(1, cfg.Fps));
-        Add(p, "-c:v", "h264_mf", "-hw_encoding", "1", "-scenario", "display_remoting", "-rate_control", "cbr", "-b:v", $"{cfg.BitrateMbps}M", "-maxrate", $"{cfg.BitrateMbps}M", "-bufsize", $"{buf}k", "-g", cfg.Fps.ToString(), "-bf", "0", "-r:v", cfg.Fps.ToString(), "-fps_mode", "cfr", "-bsf:v", "h264_metadata=aud=insert", "-flush_packets", "1", "-f", "h264", "pipe:1");
+        Add(p, "-c:v", "h264_mf", "-hw_encoding", "1", "-scenario", "display_remoting", "-rate_control", "cbr",
+            "-b:v", $"{cfg.BitrateMbps}M", "-maxrate", $"{cfg.BitrateMbps}M", "-bufsize", $"{buf}k",
+            "-g", cfg.Fps.ToString(), "-bf", "0", "-profile:v", "baseline", "-level:v", H264Level(cfg),
+            "-r:v", cfg.Fps.ToString(), "-fps_mode", "cfr",
+            "-bsf:v", "h264_metadata=aud=insert", "-flush_packets", "1", "-f", "h264", "pipe:1");
     }
 
     private static ProcessStartInfo BuildDdaNvenc(string exe, CaptureSource src, StreamConfig cfg, bool gpuScale)
@@ -151,6 +170,33 @@ internal sealed class VideoStreamer : IAsyncDisposable
     }
     private static ProcessStartInfo BuildGdiNvenc(string exe, CaptureSource src, StreamConfig cfg) { var p = Base(exe); GdiInput(p, src, cfg); Nvenc(p, cfg); return p; }
     private static ProcessStartInfo BuildGdiMf(string exe, CaptureSource src, StreamConfig cfg) { var p = Base(exe); GdiInput(p, src, cfg); Mf(p, cfg); return p; }
+
+    private static ProcessStartInfo BuildGdiX264(string exe, CaptureSource src, StreamConfig cfg)
+    {
+        var p = Base(exe);
+        GdiInput(p, src, cfg);
+        var buf = Math.Max(160, cfg.BitrateMbps * 1000 / Math.Max(1, cfg.Fps));
+        Add(p,
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-tune", "zerolatency",
+            "-profile:v", "baseline",
+            "-level:v", H264Level(cfg),
+            "-b:v", $"{cfg.BitrateMbps}M",
+            "-maxrate", $"{cfg.BitrateMbps}M",
+            "-bufsize", $"{buf}k",
+            "-bf", "0",
+            "-g", cfg.Fps.ToString(),
+            "-keyint_min", cfg.Fps.ToString(),
+            "-sc_threshold", "0",
+            "-r:v", cfg.Fps.ToString(),
+            "-fps_mode", "cfr",
+            "-bsf:v", "h264_metadata=aud=insert",
+            "-flush_packets", "1",
+            "-f", "h264",
+            "pipe:1");
+        return p;
+    }
 
     public async ValueTask DisposeAsync() => await StopAsync();
 }

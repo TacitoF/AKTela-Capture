@@ -1,17 +1,21 @@
-# AKTela Capture v1.3
+# AKTela Capture v1.4
 
-## Correções
+Correções desta versão:
 
-- O campo do código da Activity voltou a ser exibido corretamente.
-- O código permanece legível durante a transmissão.
-- Botão Colar mantém o estilo visual em vez de ficar cinza.
-- Restaura informações essenciais que existiam nas versões anteriores:
-  - saída;
-  - FPS real da captura;
-  - encoder em uso;
-  - quantidade de espectadores.
-- Status mostra resolução, FPS, encoder e latência sem poluir a interface.
-- Clique esquerdo ou duplo clique no ícone da bandeja abre a janela.
-- Menu da bandeja mostra o estado atual da transmissão.
+- H.264 passa a usar Baseline Profile para maior compatibilidade com WebCodecs/Discord;
+- nível H.264 é escolhido conforme resolução/FPS;
+- fallback final via `libx264` baseline/zerolatency se os encoders por hardware falharem;
+- saída preserva a proporção da tela/janela em vez de cortar ou deformar conteúdo;
+- atalho global `Ctrl + Shift + S` restaurado para iniciar/encerrar a transmissão;
+- menu da bandeja exibe o mesmo atalho;
+- controles de mídia e controle usam filas separadas para evitar que cursor/ping/status sejam descartados durante vídeo pesado;
+- fila de vídeo menor para reduzir acúmulo de latência;
+- mantém informações de Saída, Captura, Encoder e Assistindo na interface.
 
-A camada de vídeo continua enviando binário diretamente para o Cloudflare Relay. O Relay v2 converte somente o trecho necessário para a Discord Activity.
+Estrutura:
+
+- `.github/workflows/build-windows.yml`
+- `AKTelaCaptureV1/`
+- `README.md`
+
+Substitua `AKTelaCaptureV1/` e `.github/workflows/build-windows.yml` no repositório `AKTela-Capture`.

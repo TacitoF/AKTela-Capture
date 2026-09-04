@@ -27,6 +27,14 @@ internal sealed class MainForm : Form
 
     private readonly SemaphoreSlim _mediaGate = new(1, 1);
 
+    private const int HotkeyId = 0xA711;
+    private const int WmHotkey = 0x0312;
+    private const uint ModControl = 0x0002;
+    private const uint ModShift = 0x0004;
+    private const uint VkS = 0x53;
+
+    private bool _hotkeyRegistered;
+    private bool _toggleBusy;
     private bool _sharing;
     private bool _relayConnected;
     private bool _allowClose;
@@ -54,7 +62,7 @@ internal sealed class MainForm : Form
         base.Text = "AKTela Capture";
         BackColor = Bg;
         ForeColor = TextColor;
-        ClientSize = new Size(430, 670);
+        ClientSize = new Size(430, 704);
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
@@ -227,6 +235,16 @@ internal sealed class MainForm : Form
         StyleButton(_start, Accent);
         _start.Font = new Font("Segoe UI Variable Text", 10f, FontStyle.Bold);
         Controls.Add(_start);
+
+        Controls.Add(new Label
+        {
+            Text = "Atalho global: Ctrl + Shift + S   •   Clique no ícone da bandeja para abrir",
+            AutoSize = false,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Bounds = new Rectangle(20, 657, 390, 24),
+            ForeColor = Muted,
+            Font = new Font("Segoe UI Variable Text", 7.5f)
+        });
     }
 
     private Button PresetButton(string text, int x, int y, string preset)
@@ -339,13 +357,27 @@ internal sealed class MainForm : Form
         _start.Enabled = _source.Items.Count > 0;
     }
 
+    private static (int Width, int Height) FitOutput(CaptureSource source, QualityOption quality)
+    {
+        var sourceW = Math.Max(2, source.Width);
+        var sourceH = Math.Max(2, source.Height);
+        var scale = Math.Min(quality.Width / (double)sourceW, quality.Height / (double)sourceH);
+        var width = Math.Max(2, ((int)Math.Round(sourceW * scale)) & ~1);
+        var height = Math.Max(2, ((int)Math.Round(sourceH * scale)) & ~1);
+        return (width, height);
+    }
+
     private async Task Toggle()
     {
-        if (_sharing)
+        if (_toggleBusy) return;
+        _toggleBusy = true;
+        try
         {
-            await Stop();
-            return;
-        }
+            if (_sharing)
+            {
+                await Stop();
+                return;
+            }
 
         if (_source.SelectedItem is not CaptureSource source ||
             _quality.SelectedItem is not QualityOption quality)
@@ -361,9 +393,10 @@ internal sealed class MainForm : Form
 
         var cursorPolicy = _preset == "Jogo" ? "Ocultar" : "Mostrar";
 
+        var output = FitOutput(source, quality);
         var cfg = new StreamConfig(
-            quality.Width,
-            quality.Height,
+            output.Width,
+            output.Height,
             quality.Fps,
             quality.BitrateMbps,
             audioMode != AudioMode.Off,
@@ -381,7 +414,7 @@ internal sealed class MainForm : Form
             _activeSource = source;
             _activeConfig = cfg;
             _activeAudio = audioMode;
-            _outputValue.Text = quality.Height >= 1080 ? "1080p" : "720p";
+            _outputValue.Text = $"{cfg.Width}×{cfg.Height}";
             _viewerValue.Text = Math.Max(0, _relay.ViewerCount).ToString();
 
             Lock(true);
@@ -402,6 +435,11 @@ internal sealed class MainForm : Form
         finally
         {
             _start.Enabled = true;
+        }
+        }
+        finally
+        {
+            _toggleBusy = false;
         }
     }
 
@@ -558,7 +596,7 @@ internal sealed class MainForm : Form
         menu.Items.Add(_trayStatusItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Abrir AKTela Capture", null, (_, _) => Restore());
-        menu.Items.Add("Iniciar/encerrar", null, async (_, _) => await Toggle());
+        menu.Items.Add("Iniciar/encerrar   Ctrl+Shift+S", null, async (_, _) => await Toggle());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Sair", null, async (_, _) =>
         {
@@ -572,6 +610,40 @@ internal sealed class MainForm : Form
 
         _tray.ContextMenuStrip = menu;
     }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        _hotkeyRegistered = RegisterHotKey(Handle, HotkeyId, ModControl | ModShift, VkS);
+        if (!_hotkeyRegistered)
+            _detail.Text = "Atalho Ctrl + Shift + S indisponível; use o botão ou a bandeja.";
+    }
+
+    protected override void OnHandleDestroyed(EventArgs e)
+    {
+        if (_hotkeyRegistered)
+        {
+            try { UnregisterHotKey(Handle, HotkeyId); } catch { }
+            _hotkeyRegistered = false;
+        }
+        base.OnHandleDestroyed(e);
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        if (m.Msg == WmHotkey && m.WParam.ToInt32() == HotkeyId)
+        {
+            _ = Toggle();
+            return;
+        }
+        base.WndProc(ref m);
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
     private void UpdateTray()
     {
@@ -643,7 +715,8 @@ internal sealed class MainForm : Form
             .Replace("NVENC · D3D11", "NVENC")
             .Replace("Media Foundation · D3D11", "Media F.")
             .Replace("NVENC · compatibilidade", "NVENC")
-            .Replace("Media Foundation · compatibilidade", "Media F.");
+            .Replace("Media Foundation · compatibilidade", "Media F.")
+            .Replace("Software H.264 · compatibilidade", "Software");
     }
 
     private void Label(string text, int x, int y)
