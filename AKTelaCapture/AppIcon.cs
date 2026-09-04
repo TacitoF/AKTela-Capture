@@ -1,5 +1,3 @@
-using System.Reflection;
-
 namespace AKTelaCapture;
 
 internal static class AppIcon
@@ -8,15 +6,10 @@ internal static class AppIcon
     {
         try
         {
-            var assembly = Assembly.GetExecutingAssembly();
-            using var stream = assembly.GetManifestResourceStream("AKTela.AppIcon.ico");
-            if (stream is not null)
-                return new Icon(stream);
+            var stream = typeof(AppIcon).Assembly.GetManifestResourceStream("AKTela.AppIcon.ico");
+            if (stream is not null) return new Icon(stream);
         }
-        catch
-        {
-        }
-
-        return Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
+        catch { }
+        return SystemIcons.Application;
     }
 }

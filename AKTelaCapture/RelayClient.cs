@@ -7,197 +7,84 @@ namespace AKTelaCapture;
 
 internal sealed class RelayClient : IAsyncDisposable
 {
-    private const string RelayConfigUrl = "https://ak-tela-three.vercel.app/relay.json";
-    private const string FallbackRelayUrl = "wss://ak-tela-three.vercel.app/api/ws";
+    private const string RelayWs = "wss://aktela-relay.tacito1-filho.workers.dev/ws";
+    private const string RelayHealth = "https://aktela-relay.tacito1-filho.workers.dev/health";
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(4) };
+    private CancellationTokenSource? _cts; private Task? _task; private Channel<(byte[] Data, WebSocketMessageType Type)>? _queue;
+    private string _room = string.Empty; private StreamConfig? _config; private int _viewers; private long _latency;
+    public bool IsRunning => _task is { IsCompleted: false }; public int ViewerCount => Volatile.Read(ref _viewers); public long LatencyMs => Volatile.Read(ref _latency);
+    public event Action<bool>? ConnectionChanged; public event Action<int>? ViewerCountChanged; public event Action<long>? LatencyChanged; public event Action<string>? Error;
 
-    private CancellationTokenSource? _cts;
-    private Task? _runTask;
-    private Channel<OutgoingMessage>? _outgoing;
-    private string _roomCode = string.Empty;
-    private StreamConfig? _config;
-    private string _relayBaseUrl = FallbackRelayUrl;
-    private int _viewerCount;
-    private long _latencyMs;
-
-    public event Action<bool>? ConnectionChanged;
-    public event Action<int>? ViewerCountChanged;
-    public event Action<long>? LatencyChanged;
-    public event Action<string>? RelayError;
-    public bool IsRunning => _runTask is { IsCompleted: false };
-    public int ViewerCount => Volatile.Read(ref _viewerCount);
-    public long LatencyMs => Volatile.Read(ref _latencyMs);
-
-    public async Task StartAsync(string roomCode, StreamConfig config)
+    public async Task StartAsync(string room, StreamConfig config)
     {
         if (IsRunning) return;
-        _roomCode = NormalizeRoomCode(roomCode);
-        if (_roomCode.Length != 6) throw new ArgumentException("Informe o código de 6 caracteres exibido na Activity.");
+        _room = Normalize(room);
+        if (!System.Text.RegularExpressions.Regex.IsMatch(_room, "^[A-Z2-9]{6}$")) throw new ArgumentException("Código inválido. Use os 6 caracteres mostrados na Activity.");
         _config = config;
-        _relayBaseUrl = await ResolveRelayBaseUrlAsync();
-        _outgoing = Channel.CreateBounded<OutgoingMessage>(new BoundedChannelOptions(24)
-        {
-            FullMode = BoundedChannelFullMode.DropOldest,
-            SingleReader = true,
-            SingleWriter = false
-        });
-        _cts = new CancellationTokenSource();
-        _runTask = Task.Run(() => RunAsync(_cts.Token));
+        try { using var health = await Http.GetAsync(RelayHealth); health.EnsureSuccessStatusCode(); }
+        catch (Exception ex) { throw new InvalidOperationException("O relay Cloudflare não respondeu. " + ex.Message); }
+        _queue = Channel.CreateBounded<(byte[], WebSocketMessageType)>(new BoundedChannelOptions(32) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true, SingleWriter = false });
+        _cts = new CancellationTokenSource(); _task = Task.Run(() => Run(_cts.Token));
     }
 
-    public bool TryQueuePacket(byte[] packet) => _outgoing?.Writer.TryWrite(new OutgoingMessage(packet, WebSocketMessageType.Binary)) == true;
-
-    public bool TryQueueControl(object payload)
-    {
-        try
-        {
-            var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload));
-            return _outgoing?.Writer.TryWrite(new OutgoingMessage(bytes, WebSocketMessageType.Text)) == true;
-        }
-        catch { return false; }
-    }
+    public bool QueuePacket(byte[] packet) => _queue?.Writer.TryWrite((packet, WebSocketMessageType.Binary)) == true;
+    public bool QueueControl(object obj) { try { return _queue?.Writer.TryWrite((Encoding.UTF8.GetBytes(JsonSerializer.Serialize(obj)), WebSocketMessageType.Text)) == true; } catch { return false; } }
 
     public async Task StopAsync()
     {
-        var cts = _cts; var task = _runTask;
-        _cts = null; _runTask = null;
-        if (cts is null) return;
-        cts.Cancel();
-        try { if (task is not null) await Task.WhenAny(task, Task.Delay(1500)); } catch { }
-        cts.Dispose(); _outgoing = null;
-        Interlocked.Exchange(ref _viewerCount, 0);
-        Interlocked.Exchange(ref _latencyMs, 0);
-        ViewerCountChanged?.Invoke(0); LatencyChanged?.Invoke(0); ConnectionChanged?.Invoke(false);
+        var cts = _cts; var task = _task; _cts = null; _task = null;
+        if (cts is null) return; cts.Cancel(); try { if (task is not null) await Task.WhenAny(task, Task.Delay(1200)); } catch { } cts.Dispose(); _queue = null;
+        Interlocked.Exchange(ref _viewers, 0); Interlocked.Exchange(ref _latency, 0); ViewerCountChanged?.Invoke(0); LatencyChanged?.Invoke(0); ConnectionChanged?.Invoke(false);
     }
 
-    private static async Task<string> ResolveRelayBaseUrlAsync()
-    {
-        try
-        {
-            using var response = await Http.GetAsync($"{RelayConfigUrl}?v={Environment.TickCount64}");
-            if (!response.IsSuccessStatusCode) return FallbackRelayUrl;
-            using var json = JsonDocument.Parse(await response.Content.ReadAsByteArrayAsync());
-            if (!json.RootElement.TryGetProperty("relayUrl", out var value)) return FallbackRelayUrl;
-            var raw = value.GetString()?.Trim();
-            if (string.IsNullOrWhiteSpace(raw)) return FallbackRelayUrl;
-            if (!Uri.TryCreate(raw, UriKind.Absolute, out var uri)) return FallbackRelayUrl;
-            if (uri.Scheme is not ("ws" or "wss")) return FallbackRelayUrl;
-            return raw.TrimEnd('/');
-        }
-        catch { return FallbackRelayUrl; }
-    }
-
-    private async Task RunAsync(CancellationToken token)
+    private async Task Run(CancellationToken token)
     {
         while (!token.IsCancellationRequested)
         {
-            using var socket = new ClientWebSocket();
-            using var linked = CancellationTokenSource.CreateLinkedTokenSource(token);
+            using var ws = new ClientWebSocket(); using var linked = CancellationTokenSource.CreateLinkedTokenSource(token);
             try
             {
-                await socket.ConnectAsync(new Uri($"{_relayBaseUrl}?role=publisher&room={Uri.EscapeDataString(_roomCode)}"), token);
-                await SendConfigAsync(socket, token);
-                ConnectionChanged?.Invoke(true);
-                var sender = SendLoopAsync(socket, linked.Token);
-                var receiver = ReceiveLoopAsync(socket, linked.Token);
-                var heartbeat = HeartbeatLoopAsync(linked.Token);
-                await Task.WhenAny(sender, receiver, heartbeat);
-                linked.Cancel();
-                try { await Task.WhenAll(sender, receiver, heartbeat); } catch { }
+                await ws.ConnectAsync(new Uri($"{RelayWs}?role=publisher&room={Uri.EscapeDataString(_room)}"), token);
+                await SendConfig(ws, token); ConnectionChanged?.Invoke(true);
+                var send = SendLoop(ws, linked.Token); var receive = ReceiveLoop(ws, linked.Token); var ping = PingLoop(linked.Token);
+                await Task.WhenAny(send, receive, ping); linked.Cancel(); try { await Task.WhenAll(send, receive, ping); } catch { }
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
-            catch (Exception ex) { RelayError?.Invoke(ex.Message); }
+            catch (Exception ex) { Error?.Invoke(ex.Message); }
             finally { ConnectionChanged?.Invoke(false); }
-            if (!token.IsCancellationRequested) try { await Task.Delay(900, token); } catch { break; }
+            if (!token.IsCancellationRequested) try { await Task.Delay(1000, token); } catch { break; }
         }
     }
 
-    private async Task SendConfigAsync(ClientWebSocket socket, CancellationToken token)
+    private async Task SendConfig(ClientWebSocket ws, CancellationToken token)
     {
-        var c = _config ?? new StreamConfig(1920, 1080, 30, 8, true, "Personalizado", "Tela", "Sistema", "Auto");
-        var json = JsonSerializer.Serialize(new
-        {
-            type = "stream-config",
-            videoCodec = "avc1.64002A",
-            width = c.Width,
-            height = c.Height,
-            fps = c.Fps,
-            videoBitrateMbps = c.VideoBitrateMbps,
-            audioEnabled = c.AudioEnabled,
-            audioCodec = "opus",
-            audioSampleRate = 48000,
-            audioChannels = 2,
-            preset = c.PresetName,
-            sourceKind = c.SourceKind,
-            audioMode = c.AudioMode,
-            cursorPolicy = c.CursorPolicy
-        });
-        await socket.SendAsync(Encoding.UTF8.GetBytes(json), WebSocketMessageType.Text, true, token);
+        var c = _config ?? throw new InvalidOperationException("Configuração ausente.");
+        var json = JsonSerializer.Serialize(new { type="stream-config", protocol=4, videoCodec="avc1.64002A", width=c.Width, height=c.Height, fps=c.Fps, audioEnabled=c.AudioEnabled, audioSampleRate=48000, audioChannels=2, preset=c.Preset });
+        await ws.SendAsync(Encoding.UTF8.GetBytes(json), WebSocketMessageType.Text, true, token);
     }
-
-    private async Task SendLoopAsync(ClientWebSocket socket, CancellationToken token)
+    private async Task SendLoop(ClientWebSocket ws, CancellationToken token)
     {
-        var channel = _outgoing ?? throw new InvalidOperationException("Fila de saída não inicializada.");
-        while (await channel.Reader.WaitToReadAsync(token))
-        {
-            while (channel.Reader.TryRead(out var message))
-            {
-                if (socket.State != WebSocketState.Open) return;
-                await socket.SendAsync(message.Data, message.Type, true, token);
-            }
-        }
+        var q = _queue ?? throw new InvalidOperationException("Fila ausente.");
+        while (await q.Reader.WaitToReadAsync(token)) while (q.Reader.TryRead(out var item)) { if (ws.State != WebSocketState.Open) return; await ws.SendAsync(item.Data, item.Type, true, token); }
     }
-
-    private async Task ReceiveLoopAsync(ClientWebSocket socket, CancellationToken token)
+    private async Task ReceiveLoop(ClientWebSocket ws, CancellationToken token)
     {
         var buffer = new byte[8192];
-        while (!token.IsCancellationRequested && socket.State == WebSocketState.Open)
+        while (!token.IsCancellationRequested && ws.State == WebSocketState.Open)
         {
-            var ms = new MemoryStream(); WebSocketReceiveResult result;
-            do
-            {
-                result = await socket.ReceiveAsync(buffer, token);
-                if (result.MessageType == WebSocketMessageType.Close) return;
-                if (result.MessageType == WebSocketMessageType.Text) ms.Write(buffer, 0, result.Count);
-            } while (!result.EndOfMessage);
+            using var ms = new MemoryStream(); WebSocketReceiveResult result;
+            do { result = await ws.ReceiveAsync(buffer, token); if (result.MessageType == WebSocketMessageType.Close) return; if (result.MessageType == WebSocketMessageType.Text) ms.Write(buffer,0,result.Count); } while (!result.EndOfMessage);
             if (result.MessageType != WebSocketMessageType.Text) continue;
             try
             {
-                using var json = JsonDocument.Parse(ms.ToArray());
-                var root = json.RootElement;
-                var type = root.TryGetProperty("type", out var t) ? t.GetString() : null;
-                if (type == "viewer-count" && root.TryGetProperty("count", out var ce))
-                {
-                    var count = Math.Max(0, ce.GetInt32());
-                    Interlocked.Exchange(ref _viewerCount, count);
-                    ViewerCountChanged?.Invoke(count);
-                }
-                else if (type == "pong" && root.TryGetProperty("sentAt", out var se) && se.TryGetInt64(out var sentAt))
-                {
-                    var latency = Math.Max(0, Environment.TickCount64 - sentAt);
-                    Interlocked.Exchange(ref _latencyMs, latency);
-                    LatencyChanged?.Invoke(latency);
-                }
-                else if (type == "error" && root.TryGetProperty("message", out var me))
-                {
-                    RelayError?.Invoke(me.GetString() ?? "Erro no relay.");
-                }
+                using var doc = JsonDocument.Parse(ms.ToArray()); var root = doc.RootElement; var type = root.TryGetProperty("type",out var t)?t.GetString():null;
+                if (type == "viewer-count" && root.TryGetProperty("count", out var c)) { var n = Math.Max(0,c.GetInt32()); Interlocked.Exchange(ref _viewers,n); ViewerCountChanged?.Invoke(n); }
+                else if (type == "pong" && root.TryGetProperty("sentAt",out var s) && s.TryGetInt64(out var sent)) { var l=Math.Max(0,Environment.TickCount64-sent); Interlocked.Exchange(ref _latency,l); LatencyChanged?.Invoke(l); }
             }
             catch { }
         }
     }
-
-    private async Task HeartbeatLoopAsync(CancellationToken token)
-    {
-        while (!token.IsCancellationRequested)
-        {
-            TryQueueControl(new { type = "ping", sentAt = Environment.TickCount64 });
-            await Task.Delay(TimeSpan.FromSeconds(4), token);
-        }
-    }
-
-    public static string NormalizeRoomCode(string value) => new(value.Trim().ToUpperInvariant().Where(char.IsLetterOrDigit).Take(6).ToArray());
+    private async Task PingLoop(CancellationToken token) { while (!token.IsCancellationRequested) { QueueControl(new { type="ping", sentAt=Environment.TickCount64 }); await Task.Delay(4000,token); } }
+    public static string Normalize(string value) => new(value.Trim().ToUpperInvariant().Where(char.IsLetterOrDigit).Take(6).ToArray());
     public async ValueTask DisposeAsync() => await StopAsync();
-
-    private readonly record struct OutgoingMessage(byte[] Data, WebSocketMessageType Type);
 }

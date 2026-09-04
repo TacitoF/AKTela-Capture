@@ -6,333 +6,151 @@ internal sealed class VideoStreamer : IAsyncDisposable
 {
     private Process? _process;
     private CancellationTokenSource? _cts;
-    private Task? _runTask;
-    private CaptureSourceOption? _source;
-    private StreamConfig? _config;
-    private readonly Stopwatch _fpsClock = new();
-
+    private Task? _task;
+    public bool IsRunning => _task is { IsCompleted: false };
     public event Action<byte[]>? PacketReady;
     public event Action<double>? FpsChanged;
     public event Action<string>? EncoderChanged;
     public event Action<string>? StreamError;
 
-    public bool IsRunning => _runTask is { IsCompleted: false };
-
-    public Task StartAsync(CaptureSourceOption source, StreamConfig config, CancellationToken token = default)
+    public Task StartAsync(CaptureSource source, StreamConfig config)
     {
         if (IsRunning) return Task.CompletedTask;
-        _source = source;
-        _config = config;
-        _cts = CancellationTokenSource.CreateLinkedTokenSource(token);
-        _runTask = Task.Run(() => RunAsync(_cts.Token));
+        _cts = new CancellationTokenSource();
+        _task = Task.Run(() => RunAsync(source, config, _cts.Token));
         return Task.CompletedTask;
     }
 
     public async Task StopAsync()
     {
-        var cts = _cts;
-        var task = _runTask;
-        _cts = null;
-        _runTask = null;
+        var cts = _cts; var task = _task; _cts = null; _task = null;
         if (cts is null) return;
         cts.Cancel();
-        try
-        {
-            if (_process is { HasExited: false })
-            {
-                try { _process.Kill(entireProcessTree: true); } catch { }
-            }
-            if (task is not null) await Task.WhenAny(task, Task.Delay(1500));
-        }
-        catch { }
-        cts.Dispose();
-        FpsChanged?.Invoke(0);
+        try { if (_process is { HasExited: false }) _process.Kill(true); } catch { }
+        try { if (task is not null) await Task.WhenAny(task, Task.Delay(1200)); } catch { }
+        cts.Dispose(); FpsChanged?.Invoke(0);
     }
 
-    private async Task RunAsync(CancellationToken token)
+    private async Task RunAsync(CaptureSource source, StreamConfig cfg, CancellationToken token)
     {
         try
         {
             var ffmpeg = await FfmpegManager.EnsureAsync(null, token);
-            var source = _source ?? throw new InvalidOperationException("Fonte de vídeo não selecionada.");
-            var config = _config ?? throw new InvalidOperationException("Configuração de vídeo não definida.");
-            var attempts = new List<(string Name, Func<ProcessStartInfo> Builder)>();
-
-            // Desktop Duplication captura a composição do desktop pela GPU e não sofre da tela preta
-            // do GDI ao tentar ler superfícies D3D11/D3D12 de jogos como GTA.
-            if (source.Kind == CaptureSourceKind.Window)
+            var attempts = new List<(string Name, ProcessStartInfo Psi)>
             {
-                attempts.Add(("NVIDIA NVENC · captura de jogo", () => BuildNvencDda(ffmpeg, source, config)));
-                attempts.Add(("Media Foundation · captura de jogo", () => BuildMediaFoundationDda(ffmpeg, source, config)));
-            }
-            else
-            {
-                attempts.Add(("NVIDIA NVENC", () => BuildNvencDda(ffmpeg, source, config)));
-                attempts.Add(("Media Foundation", () => BuildMediaFoundationDda(ffmpeg, source, config)));
-            }
-
-            // GDI fica somente como último fallback para apps comuns. Para jogos acelerados por GPU
-            // ele pode retornar uma imagem preta, por isso nunca é mais a primeira tentativa.
-            attempts.Add(("NVIDIA NVENC · compatibilidade", () => BuildNvencGdi(ffmpeg, source, config)));
-            attempts.Add(("Media Foundation · compatibilidade", () => BuildMediaFoundationGdi(ffmpeg, source, config)));
-
+                ("NVENC · D3D11", BuildDdaNvenc(ffmpeg, source, cfg, true)),
+                ("NVENC · D3D11 compatível", BuildDdaNvenc(ffmpeg, source, cfg, false)),
+                ("Media Foundation · D3D11", BuildDdaMf(ffmpeg, source, cfg)),
+                ("NVENC · compatibilidade", BuildGdiNvenc(ffmpeg, source, cfg)),
+                ("Media Foundation · compatibilidade", BuildGdiMf(ffmpeg, source, cfg))
+            };
             var errors = new List<string>();
             foreach (var attempt in attempts)
             {
                 if (token.IsCancellationRequested) return;
-                var result = await RunAttemptAsync(attempt.Name, attempt.Builder(), config, token);
-                if (result.CompletedNormally || token.IsCancellationRequested) return;
-                errors.Add($"{attempt.Name}:{Environment.NewLine}{result.ErrorMessage}");
+                var result = await RunAttempt(attempt.Name, attempt.Psi, cfg, token);
+                if (result.Ok || token.IsCancellationRequested) return;
+                errors.Add($"{attempt.Name}: {result.Error}");
             }
-
-            StreamError?.Invoke(errors.Count == 0
-                ? "Não foi possível iniciar o encoder de vídeo."
-                : string.Join(Environment.NewLine + Environment.NewLine, errors));
+            StreamError?.Invoke(string.Join(Environment.NewLine + Environment.NewLine, errors));
         }
         catch (OperationCanceledException) { }
         catch (Exception ex) { StreamError?.Invoke(ex.Message); }
     }
 
-    private async Task<(bool CompletedNormally, string ErrorMessage)> RunAttemptAsync(
-        string name, ProcessStartInfo psi, StreamConfig config, CancellationToken token)
+    private async Task<(bool Ok, string Error)> RunAttempt(string name, ProcessStartInfo psi, StreamConfig cfg, CancellationToken token)
     {
-        using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+        using var process = new Process { StartInfo = psi };
         _process = process;
-        if (!process.Start()) return (false, $"Falha ao iniciar {name}.");
+        if (!process.Start()) return (false, "Não foi possível iniciar o FFmpeg.");
         EncoderChanged?.Invoke(name);
-
         var stderrTask = process.StandardError.ReadToEndAsync(token);
         var reader = new H264AccessUnitReader();
         var buffer = new byte[128 * 1024];
-        var emitted = 0L;
-        _fpsClock.Restart();
-
+        var fpsClock = Stopwatch.StartNew(); int frames = 0; long totalFrames = 0;
         try
         {
             while (!token.IsCancellationRequested)
             {
                 var read = await process.StandardOutput.BaseStream.ReadAsync(buffer, token);
                 if (read <= 0) break;
-
-                foreach (var (data, keyFrame) in reader.Push(buffer, read))
+                foreach (var (data, key) in reader.Push(buffer, read))
                 {
-                    emitted++;
-                    PacketReady?.Invoke(MediaPacket.Create(
-                        MediaKind.Video,
-                        keyFrame,
-                        MediaClock.NowMicroseconds(),
-                        1_000_000 / config.Fps,
-                        data));
-
-                    if (_fpsClock.ElapsedMilliseconds >= 1000)
-                    {
-                        FpsChanged?.Invoke(config.Fps);
-                        _fpsClock.Restart();
-                    }
+                    frames++; totalFrames++;
+                    PacketReady?.Invoke(PacketProtocol.Create(MediaKind.Video, key, MediaClock.NowMicroseconds(), 1_000_000 / cfg.Fps, data));
+                }
+                if (fpsClock.ElapsedMilliseconds >= 1000)
+                {
+                    FpsChanged?.Invoke(frames * 1000d / fpsClock.ElapsedMilliseconds);
+                    frames = 0; fpsClock.Restart();
                 }
             }
         }
-        catch (OperationCanceledException) when (token.IsCancellationRequested)
-        {
-            return (true, string.Empty);
-        }
-        finally
-        {
-            if (!process.HasExited)
-            {
-                try { process.Kill(entireProcessTree: true); } catch { }
-            }
-        }
-
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { return (true, string.Empty); }
+        finally { try { if (!process.HasExited) process.Kill(true); } catch { } }
         await process.WaitForExitAsync(CancellationToken.None);
         var stderr = await stderrTask;
-        if (emitted > 0 && process.ExitCode == 0) return (true, string.Empty);
-
-        var detail = string.Join(Environment.NewLine,
-            stderr.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-                .Select(x => x.Trim())
-                .Where(x => x.Length > 0)
-                .TakeLast(18));
-        return (false, string.IsNullOrWhiteSpace(detail) ? $"{name} encerrou sem gerar vídeo." : detail);
+        if (totalFrames > 0 && process.ExitCode == 0) return (true, string.Empty);
+        var detail = string.Join(" | ", stderr.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(x => x.Trim()).TakeLast(10));
+        return (false, string.IsNullOrWhiteSpace(detail) ? "encerrou sem gerar vídeo" : detail);
     }
 
-    private static ProcessStartInfo NewStartInfo(string ffmpeg) => new(ffmpeg)
+    private static ProcessStartInfo Base(string exe) => new(exe) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+    private static void Add(ProcessStartInfo p, params string[] args) { foreach (var a in args) p.ArgumentList.Add(a); }
+    private static int Even(int v) => Math.Max(2, v & ~1);
+
+    private static (int W, int H) DdaInput(ProcessStartInfo p, CaptureSource src, StreamConfig cfg)
     {
-        UseShellExecute = false,
-        CreateNoWindow = true,
-        RedirectStandardOutput = true,
-        RedirectStandardError = true,
-        RedirectStandardInput = false
-    };
-
-    private static (int Width, int Height) AddDdaInput(ProcessStartInfo psi, CaptureSourceOption source, StreamConfig config)
-    {
-        var parts = new List<string>
+        var parts = new List<string> { $"output_idx={Math.Max(0, src.OutputIndex)}", $"framerate={cfg.Fps}", "draw_mouse=0", "dup_frames=1" };
+        var w = Even(src.Width); var h = Even(src.Height);
+        if (src.Kind == SourceKind.Window)
         {
-            $"output_idx={Math.Max(0, source.FfmpegOutputIndex)}",
-            $"framerate={config.Fps}",
-            "draw_mouse=0",
-            "dup_frames=1"
-        };
-
-        var captureWidth = MakeEven(Math.Max(2, source.Width));
-        var captureHeight = MakeEven(Math.Max(2, source.Height));
-
-        if (source.Kind == CaptureSourceKind.Window)
-        {
-            var monitor = source.CaptureDisplayBounds;
-            if (monitor.Width <= 0 || monitor.Height <= 0)
-                monitor = Screen.FromRectangle(source.ScreenBounds).Bounds;
-
-            var localX = Math.Clamp(source.ScreenBounds.Left - monitor.Left, 0, Math.Max(0, monitor.Width - 2));
-            var localY = Math.Clamp(source.ScreenBounds.Top - monitor.Top, 0, Math.Max(0, monitor.Height - 2));
-            captureWidth = MakeEven(Math.Clamp(captureWidth, 2, Math.Max(2, monitor.Width - localX)));
-            captureHeight = MakeEven(Math.Clamp(captureHeight, 2, Math.Max(2, monitor.Height - localY)));
-
-            parts.Add($"video_size={captureWidth}x{captureHeight}");
-            parts.Add($"offset_x={localX}");
-            parts.Add($"offset_y={localY}");
+            var monitor = Screen.FromRectangle(src.Bounds).Bounds;
+            var x = Math.Clamp(src.Bounds.Left - monitor.Left, 0, Math.Max(0, monitor.Width - 2));
+            var y = Math.Clamp(src.Bounds.Top - monitor.Top, 0, Math.Max(0, monitor.Height - 2));
+            w = Even(Math.Clamp(w, 2, Math.Max(2, monitor.Width - x)));
+            h = Even(Math.Clamp(h, 2, Math.Max(2, monitor.Height - y)));
+            parts.Add($"video_size={w}x{h}"); parts.Add($"offset_x={x}"); parts.Add($"offset_y={y}");
         }
-
-        Add(psi,
-            "-hide_banner", "-loglevel", "warning",
-            "-f", "lavfi",
-            "-i", $"ddagrab={string.Join(":", parts)}");
-
-        return (captureWidth, captureHeight);
+        Add(p, "-hide_banner", "-loglevel", "warning", "-f", "lavfi", "-i", $"ddagrab={string.Join(':', parts)}");
+        return (w, h);
     }
 
-    private static int MakeEven(int value) => Math.Max(2, value & ~1);
-
-    private static void AddDdaSoftwareDownloadAndScale(ProcessStartInfo psi, int sourceWidth, int sourceHeight, StreamConfig config)
+    private static void Nvenc(ProcessStartInfo p, StreamConfig cfg)
     {
-        var targetWidth = MakeEven(config.Width);
-        var targetHeight = MakeEven(config.Height);
-        var filter = sourceWidth == targetWidth && sourceHeight == targetHeight
-            ? "hwdownload,format=bgra,format=nv12"
-            : "hwdownload,format=bgra," + BuildScaleFilter(sourceWidth, sourceHeight, targetWidth, targetHeight);
-        Add(psi, "-vf", filter);
+        var buf = Math.Max(160, cfg.BitrateMbps * 1000 / Math.Max(1, cfg.Fps));
+        Add(p, "-c:v", "h264_nvenc", "-preset", cfg.Fps >= 60 ? "p3" : "p4", "-tune", "ull", "-rc", "cbr", "-b:v", $"{cfg.BitrateMbps}M", "-maxrate", $"{cfg.BitrateMbps}M", "-bufsize", $"{buf}k", "-bf", "0", "-rc-lookahead", "0", "-zerolatency", "1", "-g", cfg.Fps.ToString(), "-profile:v", "high", "-r:v", cfg.Fps.ToString(), "-fps_mode", "cfr", "-bsf:v", "h264_metadata=aud=insert", "-flush_packets", "1", "-f", "h264", "pipe:1");
+    }
+    private static void Mf(ProcessStartInfo p, StreamConfig cfg)
+    {
+        var buf = Math.Max(160, cfg.BitrateMbps * 1000 / Math.Max(1, cfg.Fps));
+        Add(p, "-c:v", "h264_mf", "-hw_encoding", "1", "-scenario", "display_remoting", "-rate_control", "cbr", "-b:v", $"{cfg.BitrateMbps}M", "-maxrate", $"{cfg.BitrateMbps}M", "-bufsize", $"{buf}k", "-g", cfg.Fps.ToString(), "-bf", "0", "-r:v", cfg.Fps.ToString(), "-fps_mode", "cfr", "-bsf:v", "h264_metadata=aud=insert", "-flush_packets", "1", "-f", "h264", "pipe:1");
     }
 
-    private static void AddDdaScaleForNvencIfNeeded(ProcessStartInfo psi, int sourceWidth, int sourceHeight, StreamConfig config)
+    private static ProcessStartInfo BuildDdaNvenc(string exe, CaptureSource src, StreamConfig cfg, bool gpuScale)
     {
-        if (sourceWidth == config.Width && sourceHeight == config.Height)
-            return; // zero-copy D3D11 -> NVENC quando não há redimensionamento
-
-        Add(psi, "-vf", "hwdownload,format=bgra," + BuildScaleFilter(sourceWidth, sourceHeight, config.Width, config.Height));
-    }
-
-    private static void AddGdiInput(ProcessStartInfo psi, CaptureSourceOption source, StreamConfig config)
-    {
-        Add(psi, "-hide_banner", "-loglevel", "warning", "-f", "gdigrab", "-framerate", config.Fps.ToString(), "-draw_mouse", "0");
-        if (source.Kind == CaptureSourceKind.Window)
-        {
-            var hwndValue = unchecked((ulong)source.WindowHandle.ToInt64());
-            Add(psi, "-i", $"hwnd={hwndValue}");
-        }
+        var p = Base(exe); DdaInput(p, src, cfg);
+        if (gpuScale)
+            Add(p, "-vf", $"scale_d3d11=width={Even(cfg.Width)}:height={Even(cfg.Height)}:format=nv12");
         else
-        {
-            Add(psi,
-                "-offset_x", source.ScreenBounds.Left.ToString(),
-                "-offset_y", source.ScreenBounds.Top.ToString(),
-                "-video_size", $"{Math.Max(2, source.Width)}x{Math.Max(2, source.Height)}",
-                "-i", "desktop");
-        }
-
-        Add(psi, "-vf", BuildScaleFilter(source.Width, source.Height, config.Width, config.Height));
+            Add(p, "-vf", $"hwdownload,format=bgra,scale={Even(cfg.Width)}:{Even(cfg.Height)}:flags=fast_bilinear,format=nv12");
+        Nvenc(p, cfg); return p;
     }
-
-    private static string BuildScaleFilter(int sourceWidth, int sourceHeight, int targetWidth, int targetHeight)
+    private static ProcessStartInfo BuildDdaMf(string exe, CaptureSource src, StreamConfig cfg)
     {
-        targetWidth = MakeEven(targetWidth);
-        targetHeight = MakeEven(targetHeight);
-        if (sourceWidth == targetWidth && sourceHeight == targetHeight) return "format=nv12";
-        return $"scale={targetWidth}:{targetHeight}:force_original_aspect_ratio=decrease:flags=fast_bilinear," +
-               $"pad={targetWidth}:{targetHeight}:(ow-iw)/2:(oh-ih)/2:color=black,format=nv12";
+        var p = Base(exe); DdaInput(p, src, cfg);
+        Add(p, "-vf", $"hwdownload,format=bgra,scale={Even(cfg.Width)}:{Even(cfg.Height)}:flags=fast_bilinear,format=nv12");
+        Mf(p, cfg); return p;
     }
-
-    private static void AddNvencOptions(ProcessStartInfo psi, StreamConfig config)
+    private static void GdiInput(ProcessStartInfo p, CaptureSource src, StreamConfig cfg)
     {
-        var bufferK = Math.Max(128, config.VideoBitrateMbps * 1000 / config.Fps);
-        Add(psi,
-            "-c:v", "h264_nvenc",
-            "-preset", config.Fps >= 60 ? "p3" : "p4",
-            "-tune", "ull",
-            "-rc", "cbr",
-            "-b:v", $"{config.VideoBitrateMbps}M",
-            "-maxrate", $"{config.VideoBitrateMbps}M",
-            "-bufsize", $"{bufferK}k",
-            "-bf", "0",
-            "-rc-lookahead", "0",
-            "-zerolatency", "1",
-            "-g", config.Fps.ToString(),
-            "-profile:v", "high",
-            "-spatial-aq", "1",
-            "-r:v", config.Fps.ToString(),
-            "-fps_mode", "cfr",
-            "-bsf:v", "h264_metadata=aud=insert",
-            "-flush_packets", "1",
-            "-f", "h264", "pipe:1");
+        Add(p, "-hide_banner", "-loglevel", "warning", "-f", "gdigrab", "-framerate", cfg.Fps.ToString(), "-draw_mouse", "0");
+        if (src.Kind == SourceKind.Window) Add(p, "-i", $"hwnd={unchecked((ulong)src.WindowHandle.ToInt64())}");
+        else Add(p, "-offset_x", src.Bounds.Left.ToString(), "-offset_y", src.Bounds.Top.ToString(), "-video_size", $"{src.Width}x{src.Height}", "-i", "desktop");
+        Add(p, "-vf", $"scale={Even(cfg.Width)}:{Even(cfg.Height)}:flags=fast_bilinear,format=nv12");
     }
-
-    private static void AddMediaFoundationOptions(ProcessStartInfo psi, StreamConfig config)
-    {
-        var bufferK = Math.Max(128, config.VideoBitrateMbps * 1000 / config.Fps);
-        Add(psi,
-            "-c:v", "h264_mf",
-            "-hw_encoding", "1",
-            "-scenario", "display_remoting",
-            "-rate_control", "cbr",
-            "-b:v", $"{config.VideoBitrateMbps}M",
-            "-maxrate", $"{config.VideoBitrateMbps}M",
-            "-bufsize", $"{bufferK}k",
-            "-g", config.Fps.ToString(),
-            "-bf", "0",
-            "-r:v", config.Fps.ToString(),
-            "-fps_mode", "cfr",
-            "-bsf:v", "h264_metadata=aud=insert",
-            "-flush_packets", "1",
-            "-f", "h264", "pipe:1");
-    }
-
-    private static ProcessStartInfo BuildNvencDda(string ffmpeg, CaptureSourceOption source, StreamConfig config)
-    {
-        var psi = NewStartInfo(ffmpeg);
-        var size = AddDdaInput(psi, source, config);
-        AddDdaScaleForNvencIfNeeded(psi, size.Width, size.Height, config);
-        AddNvencOptions(psi, config);
-        return psi;
-    }
-
-    private static ProcessStartInfo BuildMediaFoundationDda(string ffmpeg, CaptureSourceOption source, StreamConfig config)
-    {
-        var psi = NewStartInfo(ffmpeg);
-        var size = AddDdaInput(psi, source, config);
-        AddDdaSoftwareDownloadAndScale(psi, size.Width, size.Height, config);
-        AddMediaFoundationOptions(psi, config);
-        return psi;
-    }
-
-    private static ProcessStartInfo BuildNvencGdi(string ffmpeg, CaptureSourceOption source, StreamConfig config)
-    {
-        var psi = NewStartInfo(ffmpeg);
-        AddGdiInput(psi, source, config);
-        AddNvencOptions(psi, config);
-        return psi;
-    }
-
-    private static ProcessStartInfo BuildMediaFoundationGdi(string ffmpeg, CaptureSourceOption source, StreamConfig config)
-    {
-        var psi = NewStartInfo(ffmpeg);
-        AddGdiInput(psi, source, config);
-        AddMediaFoundationOptions(psi, config);
-        return psi;
-    }
-
-    private static void Add(ProcessStartInfo psi, params string[] args)
-    {
-        foreach (var arg in args) psi.ArgumentList.Add(arg);
-    }
+    private static ProcessStartInfo BuildGdiNvenc(string exe, CaptureSource src, StreamConfig cfg) { var p = Base(exe); GdiInput(p, src, cfg); Nvenc(p, cfg); return p; }
+    private static ProcessStartInfo BuildGdiMf(string exe, CaptureSource src, StreamConfig cfg) { var p = Base(exe); GdiInput(p, src, cfg); Mf(p, cfg); return p; }
 
     public async ValueTask DisposeAsync() => await StopAsync();
 }
