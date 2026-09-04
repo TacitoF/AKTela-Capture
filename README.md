@@ -1,4 +1,4 @@
-# AKTela Capture v0.6
+# AKTela Capture v0.6.1
 
 Atualização focada em identidade visual, simplicidade e uso pela bandeja do Windows.
 
@@ -25,3 +25,8 @@ Atualização focada em identidade visual, simplicidade e uso pela bandeja do Wi
 A atualização visual não altera o pipeline de captura/encode. Foram usados apenas controles WinForms e desenho 2D simples, sem WebView, Electron ou framework adicional de UI. Isso preserva o comportamento leve da versão anterior.
 
 O caminho preferencial continua sendo captura DXGI/D3D11 + encoder por hardware, com fallback de compatibilidade quando necessário.
+
+
+## Ícone do aplicativo
+
+A v0.6.1 embute o novo ícone AKTela diretamente no executável e também o utiliza na janela e no ícone da bandeja. O arquivo `Assets/AKTela.ico` contém múltiplas resoluções para Windows (16 a 256 px).

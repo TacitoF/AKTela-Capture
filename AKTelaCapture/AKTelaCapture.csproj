@@ -9,8 +9,9 @@
     <AssemblyName>AKTelaCapture</AssemblyName>
     <RootNamespace>AKTelaCapture</RootNamespace>
     <Product>AKTela Capture</Product>
-    <AssemblyVersion>0.6.0.0</AssemblyVersion>
-    <FileVersion>0.6.0.0</FileVersion>
+    <Version>0.6.1</Version>
+    <AssemblyVersion>0.6.1.0</AssemblyVersion>
+    <FileVersion>0.6.1.0</FileVersion>
     <ApplicationIcon>Assets\AKTela.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
@@ -21,6 +22,10 @@
     <DebugType>none</DebugType>
     <DebugSymbols>false</DebugSymbols>
   </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\AKTela.ico" LogicalName="AKTela.AppIcon.ico" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="ScreenCapture.NET.DX11" Version="3.0.0" />

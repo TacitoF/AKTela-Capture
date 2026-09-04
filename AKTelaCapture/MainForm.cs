@@ -65,7 +65,7 @@ internal sealed class MainForm : Form
         MinimumSize = MaximumSize = Size;
         AutoScaleMode = AutoScaleMode.Dpi;
         DoubleBuffered = true;
-        Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+        Icon = AppIcon.Load();
         Paint += PaintWindowBorder;
 
         BuildUi();
