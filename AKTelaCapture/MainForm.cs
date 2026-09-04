@@ -6,16 +6,18 @@ namespace AKTelaCapture;
 
 internal sealed class MainForm : Form
 {
-    private static readonly Color Bg = Color.FromArgb(20, 21, 25);
-    private static readonly Color Surface = Color.FromArgb(29, 31, 37);
-    private static readonly Color Surface2 = Color.FromArgb(37, 40, 48);
-    private static readonly Color Surface3 = Color.FromArgb(45, 48, 57);
-    private static readonly Color TextMain = Color.FromArgb(244, 245, 248);
-    private static readonly Color TextMuted = Color.FromArgb(159, 165, 180);
-    private static readonly Color Accent = Color.FromArgb(95, 106, 255);
-    private static readonly Color Green = Color.FromArgb(67, 207, 148);
-    private static readonly Color Yellow = Color.FromArgb(238, 180, 74);
-    private static readonly Color Red = Color.FromArgb(239, 92, 105);
+    private static readonly Color Bg = Color.FromArgb(8, 13, 22);
+    private static readonly Color Surface = Color.FromArgb(15, 23, 35);
+    private static readonly Color Surface2 = Color.FromArgb(20, 31, 47);
+    private static readonly Color Surface3 = Color.FromArgb(28, 42, 61);
+    private static readonly Color Stroke = Color.FromArgb(42, 61, 84);
+    private static readonly Color TextMain = Color.FromArgb(246, 249, 253);
+    private static readonly Color TextMuted = Color.FromArgb(139, 155, 178);
+    private static readonly Color Accent = Color.FromArgb(32, 169, 255);
+    private static readonly Color AccentPressed = Color.FromArgb(25, 132, 222);
+    private static readonly Color Green = Color.FromArgb(73, 209, 157);
+    private static readonly Color Yellow = Color.FromArgb(239, 184, 78);
+    private static readonly Color Red = Color.FromArgb(242, 87, 104);
 
     private readonly DX11ScreenCaptureService _displayService = new();
     private readonly RelayClient _relay = new();
@@ -39,10 +41,12 @@ internal sealed class MainForm : Form
     private readonly Label _statusDetail = new();
     private readonly Panel _dot = new();
     private readonly NotifyIcon _tray = new();
+    private readonly ToolStripMenuItem _trayStatusItem = new();
+    private readonly ToolStripMenuItem _trayToggleItem = new();
     private readonly Dictionary<string, Button> _presetButtons = new(StringComparer.OrdinalIgnoreCase);
     private Label _outputValue = new(), _fpsValue = new(), _encoderValue = new(), _latencyValue = new();
 
-    private bool _sharing, _connected, _allowClose, _syncingUi;
+    private bool _sharing, _connected, _allowClose, _syncingUi, _trayHintShown;
     private string _preset = "Jogo";
     private CaptureSourceOption? _activeSource;
     private StreamConfig? _activeConfig;
@@ -52,15 +56,17 @@ internal sealed class MainForm : Form
     {
         _cursor = new CursorTracker(_relay);
         Text = "AKTela Capture";
-        ClientSize = new Size(390, 542);
+        ClientSize = new Size(420, 566);
         StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.None;
         BackColor = Bg;
         ForeColor = TextMain;
-        Font = new Font("Segoe UI", 9F);
+        Font = new Font("Segoe UI Variable Text", 9F);
         MinimumSize = MaximumSize = Size;
+        AutoScaleMode = AutoScaleMode.Dpi;
         DoubleBuffered = true;
         Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+        Paint += PaintWindowBorder;
 
         BuildUi();
         BuildTray();
@@ -68,7 +74,7 @@ internal sealed class MainForm : Form
         RestoreSettings();
         RegisterGlobalHotkeys();
 
-        Shown += (_, _) => ApplyRoundedWindow();
+        Shown += (_, _) => { ApplyRoundedWindow(); ApplyDwmAttributes(); };
         Resize += (_, _) => ApplyRoundedWindow();
         FormClosing += OnFormClosing;
     }
@@ -103,6 +109,7 @@ internal sealed class MainForm : Form
         };
         _audioCheck.CheckedChanged += (_, _) =>
         {
+            UpdateAudioButtonVisual();
             if (_syncingUi || _sharing) return;
             if (_audioCheck.Checked)
             {
@@ -133,182 +140,205 @@ internal sealed class MainForm : Form
 
     private void BuildUi()
     {
-        var drag = new Panel { Bounds = new Rectangle(0, 0, 390, 52), BackColor = Bg };
+        SuspendLayout();
+
+        var drag = new Panel { Bounds = new Rectangle(0, 0, 420, 56), BackColor = Bg };
         drag.MouseDown += DragWindow;
         Controls.Add(drag);
 
-        var logo = new Panel { Bounds = new Rectangle(18, 12, 28, 28), BackColor = Accent };
-        logo.Paint += (_, e) => TextRenderer.DrawText(
-            e.Graphics, "AK", new Font("Segoe UI", 8.2F, FontStyle.Bold),
-            logo.ClientRectangle, Color.White,
-            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
-        drag.Controls.Add(logo); RoundControl(logo, 8);
+        var appIcon = new PictureBox
+        {
+            Bounds = new Rectangle(18, 11, 34, 34),
+            Image = Icon?.ToBitmap(),
+            SizeMode = PictureBoxSizeMode.Zoom,
+            BackColor = Color.Transparent,
+            TabStop = false
+        };
+        drag.Controls.Add(appIcon);
 
         var title = new Label
         {
             Text = "AKTela Capture",
             AutoSize = true,
-            Font = new Font("Segoe UI Semibold", 10.5F, FontStyle.Bold),
+            Font = new Font("Segoe UI Variable Display", 10.5F, FontStyle.Bold),
             ForeColor = TextMain,
-            Location = new Point(57, 17)
+            Location = new Point(63, 9)
         };
         title.MouseDown += DragWindow;
         drag.Controls.Add(title);
 
-        var options = TitleButton("•••", 286);
-        options.Font = new Font("Segoe UI Semibold", 8F, FontStyle.Bold);
+        var subtitle = new Label
+        {
+            Text = "Compartilhamento leve",
+            AutoSize = true,
+            Font = new Font("Segoe UI Variable Text", 7.7F),
+            ForeColor = TextMuted,
+            Location = new Point(64, 31)
+        };
+        subtitle.MouseDown += DragWindow;
+        drag.Controls.Add(subtitle);
+
+        var options = TitleButton("⋯", 316);
+        options.Font = new Font("Segoe UI Symbol", 11F, FontStyle.Bold);
         options.Click += (_, _) => ShowOptionsMenu(options);
         drag.Controls.Add(options);
 
-        var min = TitleButton("—", 321);
+        var min = TitleButton("—", 350);
         min.Click += (_, _) => HideToTray();
         drag.Controls.Add(min);
 
-        var close = TitleButton("×", 355);
+        var close = TitleButton("×", 384);
         close.Click += (_, _) => HideToTray();
         drag.Controls.Add(close);
 
-        var statusCard = CardPanel(24, 62, 342, 58);
+        var statusCard = CardPanel(18, 64, 384, 50);
         Controls.Add(statusCard);
-        _dot.Bounds = new Rectangle(16, 17, 9, 9);
+        _dot.Bounds = new Rectangle(15, 20, 8, 8);
         _dot.BackColor = TextMuted;
         _dot.Paint += (_, e) =>
         {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
             using var b = new SolidBrush(_dot.BackColor);
-            e.Graphics.FillEllipse(b, 0, 0, 9, 9);
+            e.Graphics.FillEllipse(b, 0, 0, 8, 8);
         };
         statusCard.Controls.Add(_dot);
 
         _status.Text = "Pronto para compartilhar";
         _status.AutoSize = true;
-        _status.Font = new Font("Segoe UI Semibold", 9.2F, FontStyle.Bold);
+        _status.Font = new Font("Segoe UI Variable Text", 9F, FontStyle.Bold);
         _status.ForeColor = TextMain;
-        _status.Location = new Point(36, 11);
+        _status.Location = new Point(34, 8);
         statusCard.Controls.Add(_status);
 
-        _statusDetail.Text = "Configure a transmissão e clique em iniciar";
+        _statusDetail.Text = "Cole o código e escolha o que compartilhar";
         _statusDetail.AutoSize = true;
-        _statusDetail.Font = new Font("Segoe UI", 7.8F);
+        _statusDetail.Font = new Font("Segoe UI Variable Text", 7.5F);
         _statusDetail.ForeColor = TextMuted;
-        _statusDetail.Location = new Point(36, 33);
+        _statusDetail.Location = new Point(34, 27);
         statusCard.Controls.Add(_statusDetail);
 
-        LabelAt("Código da Activity", 25, 137);
-        _roomCodeBox.Bounds = new Rectangle(24, 159, 342, 34);
+        LabelAt("Código da Activity", 18, 130);
+        var codeWrap = CardPanel(18, 151, 384, 40, Surface2, 10);
+        Controls.Add(codeWrap);
+        _roomCodeBox.Bounds = new Rectangle(12, 8, 278, 24);
         _roomCodeBox.BackColor = Surface2;
         _roomCodeBox.ForeColor = TextMain;
-        _roomCodeBox.BorderStyle = BorderStyle.FixedSingle;
+        _roomCodeBox.BorderStyle = BorderStyle.None;
         _roomCodeBox.CharacterCasing = CharacterCasing.Upper;
         _roomCodeBox.MaxLength = 6;
-        _roomCodeBox.TextAlign = HorizontalAlignment.Center;
-        _roomCodeBox.Font = new Font("Segoe UI Semibold", 11.5F, FontStyle.Bold);
-        Controls.Add(_roomCodeBox);
+        _roomCodeBox.TextAlign = HorizontalAlignment.Left;
+        _roomCodeBox.Font = new Font("Segoe UI Variable Text", 11F, FontStyle.Bold);
+        _roomCodeBox.PlaceholderText = "ABC123";
+        _roomCodeBox.Click += (_, _) => _roomCodeBox.SelectAll();
+        codeWrap.Controls.Add(_roomCodeBox);
 
-        LabelAt("Modo", 25, 210);
-        LabelAt("Qualidade", 202, 210);
+        var paste = SmallActionButton("Colar", new Rectangle(300, 5, 76, 30));
+        paste.Click += (_, _) => PasteRoomCode();
+        codeWrap.Controls.Add(paste);
 
-        _profileCombo.Bounds = new Rectangle(24, 232, 160, 32);
-        StyleCombo(_profileCombo);
+        LabelAt("Modo", 18, 209);
+        var presetBar = CardPanel(18, 230, 384, 40, Surface, 10);
+        Controls.Add(presetBar);
+        AddPresetButton(presetBar, "Jogo", 4, 4, 122, 32);
+        AddPresetButton(presetBar, "Filme", 131, 4, 122, 32);
+        AddPresetButton(presetBar, "Leve", 258, 4, 122, 32);
+
+        // Mantido internamente para preservar a lógica de presets sem poluir a interface.
+        _profileCombo.Visible = false;
         _profileCombo.Items.AddRange(["Jogo", "Filme", "Leve", "Personalizado"]);
-        Controls.Add(_profileCombo);
 
-        _qualityCombo.Bounds = new Rectangle(201, 232, 165, 32);
+        LabelAt("Qualidade", 18, 287);
+        LabelAt("Fonte", 215, 287);
+
+        _qualityCombo.Bounds = new Rectangle(18, 308, 184, 34);
         StyleCombo(_qualityCombo);
         foreach (var q in QualityOption.All) _qualityCombo.Items.Add(q);
         Controls.Add(_qualityCombo);
 
-        LabelAt("Compartilhar", 25, 282);
-        _sourceTypeCombo.Bounds = new Rectangle(24, 304, 96, 32);
+        _sourceTypeCombo.Bounds = new Rectangle(215, 308, 187, 34);
         StyleCombo(_sourceTypeCombo);
         _sourceTypeCombo.Items.AddRange(["Tela", "Janela"]);
         Controls.Add(_sourceTypeCombo);
 
-        _sourceCombo.Bounds = new Rectangle(127, 304, 202, 32);
+        LabelAt("Janela ou tela", 18, 359);
+        _sourceCombo.Bounds = new Rectangle(18, 380, 344, 34);
         StyleCombo(_sourceCombo);
         Controls.Add(_sourceCombo);
 
-        var refresh = new Button
-        {
-            Text = "↻",
-            Bounds = new Rectangle(336, 304, 30, 32),
-            BackColor = Surface2,
-            ForeColor = TextMuted,
-            FlatStyle = FlatStyle.Flat,
-            Cursor = Cursors.Hand,
-            Font = new Font("Segoe UI Symbol", 11F),
-            TabStop = false
-        };
-        refresh.FlatAppearance.BorderSize = 0;
+        var refresh = SmallActionButton("↻", new Rectangle(368, 380, 34, 34));
+        refresh.Font = new Font("Segoe UI Symbol", 11F);
         refresh.Click += (_, _) => LoadSources();
         Controls.Add(refresh);
-        RoundControl(refresh, 8);
 
-        var audioRow = CardPanel(24, 354, 342, 58);
+        var audioRow = CardPanel(18, 431, 384, 48);
         Controls.Add(audioRow);
-        _audioCheck.Text = "Compartilhar áudio";
-        _audioCheck.AutoSize = true;
-        _audioCheck.ForeColor = TextMain;
-        _audioCheck.BackColor = Surface;
-        _audioCheck.Font = new Font("Segoe UI Semibold", 9F, FontStyle.Bold);
-        _audioCheck.Location = new Point(14, 10);
-        audioRow.Controls.Add(_audioCheck);
         audioRow.Controls.Add(new Label
         {
-            Text = "O áudio do Discord é removido automaticamente.",
+            Text = "Áudio do sistema",
+            AutoSize = true,
+            ForeColor = TextMain,
+            BackColor = Color.Transparent,
+            Font = new Font("Segoe UI Variable Text", 8.8F, FontStyle.Bold),
+            Location = new Point(14, 7)
+        });
+        audioRow.Controls.Add(new Label
+        {
+            Text = "Evita retorno do áudio do Discord",
             AutoSize = true,
             ForeColor = TextMuted,
-            BackColor = Surface,
-            Font = new Font("Segoe UI", 7.6F),
-            Location = new Point(15, 34)
+            BackColor = Color.Transparent,
+            Font = new Font("Segoe UI Variable Text", 7.2F),
+            Location = new Point(14, 27)
         });
 
-        // Controles internos: continuam existindo para preservar a lógica,
-        // mas as opções técnicas ficam fora da interface principal.
+        _audioCheck.Appearance = Appearance.Button;
+        _audioCheck.Bounds = new Rectangle(298, 9, 72, 30);
+        _audioCheck.FlatStyle = FlatStyle.Flat;
+        _audioCheck.FlatAppearance.BorderSize = 0;
+        _audioCheck.TextAlign = ContentAlignment.MiddleCenter;
+        _audioCheck.Font = new Font("Segoe UI Variable Text", 8F, FontStyle.Bold);
+        _audioCheck.Cursor = Cursors.Hand;
+        audioRow.Controls.Add(_audioCheck);
+        RoundControl(_audioCheck, 9);
+
+        // Opções técnicas continuam existindo, mas ficam no menu de opções.
         _audioCombo.Visible = false;
         _cursorCombo.Visible = false;
         _cursorCombo.Items.AddRange(["Automático", "Mostrar", "Ocultar"]);
+        _minimizeCheck.Visible = false;
 
-        _toggle.Bounds = new Rectangle(24, 432, 342, 56);
+        _toggle.Bounds = new Rectangle(18, 497, 384, 52);
         _toggle.Text = "Iniciar transmissão";
         _toggle.BackColor = Accent;
         _toggle.ForeColor = Color.White;
         _toggle.FlatStyle = FlatStyle.Flat;
         _toggle.FlatAppearance.BorderSize = 0;
-        _toggle.Font = new Font("Segoe UI Semibold", 10.2F, FontStyle.Bold);
+        _toggle.FlatAppearance.MouseOverBackColor = Color.FromArgb(42, 180, 255);
+        _toggle.FlatAppearance.MouseDownBackColor = AccentPressed;
+        _toggle.Font = new Font("Segoe UI Variable Text", 9.7F, FontStyle.Bold);
         _toggle.Cursor = Cursors.Hand;
         _toggle.Click += async (_, _) => await ToggleAsync();
         Controls.Add(_toggle);
-        RoundControl(_toggle, 13);
+        RoundControl(_toggle, 12);
 
-        Controls.Add(new Label
-        {
-            Text = "Ctrl + Shift + S inicia ou encerra",
-            Bounds = new Rectangle(24, 508, 342, 18),
-            TextAlign = ContentAlignment.MiddleCenter,
-            ForeColor = Color.FromArgb(116, 122, 136),
-            Font = new Font("Segoe UI", 7.2F)
-        });
-
-        _minimizeCheck.Visible = false;
+        UpdateAudioButtonVisual();
+        ResumeLayout(false);
     }
 
     private void ShowOptionsMenu(Control anchor)
     {
         var menu = new ContextMenuStrip
         {
-            BackColor = Surface2,
-            ForeColor = TextMain,
             ShowImageMargin = false,
-            Renderer = new ToolStripProfessionalRenderer()
+            Font = new Font("Segoe UI Variable Text", 9F)
         };
 
-        var cursorMenu = new ToolStripMenuItem("Cursor") { ForeColor = TextMain };
+        var cursorMenu = new ToolStripMenuItem("Cursor");
         foreach (var item in new[] { "Automático", "Mostrar", "Ocultar" })
         {
             var entry = new ToolStripMenuItem(item)
             {
-                Checked = string.Equals(_cursorCombo.SelectedItem?.ToString(), item, StringComparison.OrdinalIgnoreCase),
-                CheckOnClick = false
+                Checked = string.Equals(_cursorCombo.SelectedItem?.ToString(), item, StringComparison.OrdinalIgnoreCase)
             };
             entry.Click += (_, _) =>
             {
@@ -325,13 +355,27 @@ internal sealed class MainForm : Form
         };
         minimize.CheckedChanged += (_, _) => _minimizeCheck.Checked = minimize.Checked;
 
-        var shortcut = new ToolStripMenuItem("Atalho: Ctrl + Shift + S") { Enabled = false };
+        var topMost = new ToolStripMenuItem("Manter janela acima")
+        {
+            Checked = TopMost,
+            CheckOnClick = true
+        };
+        topMost.CheckedChanged += (_, _) => TopMost = topMost.Checked;
 
         menu.Items.Add(cursorMenu);
         menu.Items.Add(minimize);
+        menu.Items.Add(topMost);
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add(shortcut);
-        menu.Show(anchor, new Point(anchor.Width - menu.Width, anchor.Height));
+        menu.Items.Add(new ToolStripMenuItem("Atalho: Ctrl + Shift + S") { Enabled = false });
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("Sair do AKTela Capture", null, async (_, _) =>
+        {
+            _allowClose = true;
+            if (_sharing) await StopSharingAsync();
+            Close();
+        });
+
+        menu.Show(anchor, new Point(anchor.Width, anchor.Height));
     }
 
     private void RestoreSettings()
@@ -348,6 +392,7 @@ internal sealed class MainForm : Form
         SelectAudioFromSettings();
         SetPresetVisual(_settings.Preset is "Jogo" or "Filme" or "Leve" or "Personalizado" ? _settings.Preset : "Jogo");
         _audioCheck.Checked = (_audioCombo.SelectedItem as AudioOption)?.Mode != AudioCaptureMode.Off;
+        UpdateAudioButtonVisual();
     }
 
     private void ApplyPreset(string name)
@@ -609,7 +654,7 @@ internal sealed class MainForm : Form
         _connected = false; _activeSource = null; _activeConfig = null;
         LockInputs(false); _toggle.Text = "Iniciar transmissão"; _toggle.BackColor = Accent;
         _outputValue.Text = "—"; _fpsValue.Text = "—"; _encoderValue.Text = "—"; _latencyValue.Text = "—";
-        SetStatus("Pronto para compartilhar", TextMuted); _statusDetail.Text = "Configure a transmissão e clique em iniciar"; _toggle.Enabled = true;
+        SetStatus("Pronto para compartilhar", TextMuted); _statusDetail.Text = "Cole o código e escolha o que compartilhar"; _toggle.Enabled = true;
     }
 
     private void SaveSettings(string room, QualityOption quality, AudioCaptureMode audioMode, string cursorPolicy)
@@ -635,7 +680,8 @@ internal sealed class MainForm : Form
         if (!_sharing)
         {
             SetStatus("Pronto para compartilhar", TextMuted);
-            _statusDetail.Text = "Configure a transmissão e clique em iniciar";
+            _statusDetail.Text = "Cole o código e escolha o que compartilhar";
+            UpdateTrayState();
             return;
         }
         if (!_connected)
@@ -666,6 +712,7 @@ internal sealed class MainForm : Form
         if (_relay.LatencyMs > 0)
             parts.Add($"{_relay.LatencyMs} ms");
         _statusDetail.Text = parts.Count > 0 ? string.Join("  ·  ", parts) : "Transmissão pronta";
+        UpdateTrayState();
     }
 
     private void LockInputs(bool locked)
@@ -678,14 +725,39 @@ internal sealed class MainForm : Form
 
     private void BuildTray()
     {
-        _tray.Icon = Icon; _tray.Text = "AKTela Capture"; _tray.Visible = true;
+        _tray.Icon = Icon;
+        _tray.Text = "AKTela Capture";
+        _tray.Visible = true;
+        _tray.MouseClick += (_, e) =>
+        {
+            if (e.Button == MouseButtons.Left) RestoreFromTray();
+        };
         _tray.DoubleClick += (_, _) => RestoreFromTray();
-        var menu = new ContextMenuStrip();
-        menu.Items.Add("Abrir", null, (_, _) => RestoreFromTray());
-        menu.Items.Add("Iniciar / encerrar", null, async (_, _) => await ToggleAsync());
+
+        _trayStatusItem.Enabled = false;
+        _trayStatusItem.Text = "Pronto";
+        _trayToggleItem.Text = "Iniciar transmissão";
+        _trayToggleItem.Click += async (_, _) =>
+        {
+            if (!_sharing) RestoreFromTray();
+            await ToggleAsync();
+        };
+
+        var menu = new ContextMenuStrip { Font = new Font("Segoe UI Variable Text", 9F) };
+        menu.Opening += (_, _) => UpdateTrayState();
+        menu.Items.Add(_trayStatusItem);
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Sair", null, async (_, _) => { _allowClose = true; if (_sharing) await StopSharingAsync(); Close(); });
+        menu.Items.Add("Abrir AKTela", null, (_, _) => RestoreFromTray());
+        menu.Items.Add(_trayToggleItem);
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("Sair", null, async (_, _) =>
+        {
+            _allowClose = true;
+            if (_sharing) await StopSharingAsync();
+            Close();
+        });
         _tray.ContextMenuStrip = menu;
+        UpdateTrayState();
     }
 
     private void RegisterGlobalHotkeys()
@@ -707,12 +779,24 @@ internal sealed class MainForm : Form
     private void HideToTray()
     {
         Hide();
-        if (_sharing) _tray.Text = $"AKTela Capture · {_relay.ViewerCount} assistindo";
+        UpdateTrayState();
+        if (!_trayHintShown)
+        {
+            _trayHintShown = true;
+            _tray.BalloonTipTitle = "AKTela continua em segundo plano";
+            _tray.BalloonTipText = "Clique com o botão esquerdo no ícone da bandeja para abrir novamente.";
+            _tray.BalloonTipIcon = ToolTipIcon.Info;
+            _tray.ShowBalloonTip(2500);
+        }
     }
 
     private void RestoreFromTray()
     {
-        Show(); WindowState = FormWindowState.Normal; Activate();
+        if (!Visible) Show();
+        if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+        ShowInTaskbar = true;
+        Activate();
+        BringToFront();
     }
 
     private void OnFormClosing(object? sender, FormClosingEventArgs e)
@@ -726,31 +810,135 @@ internal sealed class MainForm : Form
         }
     }
 
-    private Panel CardPanel(int x, int y, int w, int h)
+    private Panel CardPanel(int x, int y, int w, int h, Color? color = null, int radius = 12)
     {
-        var p = new Panel { Bounds = new Rectangle(x, y, w, h), BackColor = Surface };
-        p.Paint += PaintRoundedPanel; return p;
+        var p = new Panel { Bounds = new Rectangle(x, y, w, h), BackColor = color ?? Surface, Tag = radius };
+        p.Paint += PaintRoundedPanel;
+        return p;
     }
 
-    private void LabelAt(string text, int x, int y) => Controls.Add(new Label { Text = text, AutoSize = true, ForeColor = TextMuted, Location = new Point(x, y) });
+    private void LabelAt(string text, int x, int y) => Controls.Add(new Label
+    {
+        Text = text,
+        AutoSize = true,
+        ForeColor = TextMuted,
+        Location = new Point(x, y),
+        Font = new Font("Segoe UI Variable Text", 7.8F, FontStyle.Bold)
+    });
 
     private void StyleCombo(ComboBox combo)
     {
-        combo.DropDownStyle = ComboBoxStyle.DropDownList; combo.FlatStyle = FlatStyle.Flat;
-        combo.BackColor = Surface2; combo.ForeColor = TextMain; combo.Font = new Font("Segoe UI", 9.4F);
+        combo.DropDownStyle = ComboBoxStyle.DropDownList;
+        combo.FlatStyle = FlatStyle.Flat;
+        combo.BackColor = Surface2;
+        combo.ForeColor = TextMain;
+        combo.Font = new Font("Segoe UI Variable Text", 8.7F);
+        combo.DrawMode = DrawMode.OwnerDrawFixed;
+        combo.ItemHeight = 26;
+        combo.DrawItem += (_, e) =>
+        {
+            if (e.Index < 0) return;
+            var selected = (e.State & DrawItemState.Selected) != 0;
+            using var bg = new SolidBrush(selected ? Surface3 : Surface2);
+            e.Graphics.FillRectangle(bg, e.Bounds);
+            var text = combo.Items[e.Index]?.ToString() ?? string.Empty;
+            TextRenderer.DrawText(e.Graphics, text, combo.Font,
+                new Rectangle(e.Bounds.X + 8, e.Bounds.Y, e.Bounds.Width - 12, e.Bounds.Height),
+                selected ? Color.White : TextMain,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+        };
     }
 
-    private void AddMetric(Panel p, string title, string value, int x, int y, out Label label)
+    private Button SmallActionButton(string text, Rectangle bounds)
     {
-        p.Controls.Add(new Label { Text = title, AutoSize = true, ForeColor = TextMuted, Location = new Point(x, y), Font = new Font("Segoe UI", 7.3F) });
-        label = new Label { Text = value, AutoSize = true, ForeColor = TextMain, Location = new Point(x, y + 25), Font = new Font("Segoe UI Semibold", 8.2F, FontStyle.Bold) };
-        p.Controls.Add(label);
+        var button = new Button
+        {
+            Text = text,
+            Bounds = bounds,
+            BackColor = Surface3,
+            ForeColor = TextMain,
+            FlatStyle = FlatStyle.Flat,
+            Font = new Font("Segoe UI Variable Text", 7.8F, FontStyle.Bold),
+            Cursor = Cursors.Hand,
+            TabStop = false
+        };
+        button.FlatAppearance.BorderSize = 0;
+        button.FlatAppearance.MouseOverBackColor = Color.FromArgb(37, 55, 78);
+        button.FlatAppearance.MouseDownBackColor = Color.FromArgb(30, 46, 67);
+        RoundControl(button, 8);
+        return button;
+    }
+
+    private void AddPresetButton(Control parent, string name, int x, int y, int w, int h)
+    {
+        var b = new Button
+        {
+            Text = name,
+            Bounds = new Rectangle(x, y, w, h),
+            BackColor = Surface2,
+            ForeColor = TextMuted,
+            FlatStyle = FlatStyle.Flat,
+            Font = new Font("Segoe UI Variable Text", 8.2F, FontStyle.Bold),
+            Cursor = Cursors.Hand,
+            TabStop = false
+        };
+        b.FlatAppearance.BorderSize = 0;
+        b.Click += (_, _) => { if (!_sharing) ApplyPreset(name); };
+        parent.Controls.Add(b);
+        RoundControl(b, 8);
+        _presetButtons[name] = b;
+    }
+
+    private void PasteRoomCode()
+    {
+        try
+        {
+            if (!Clipboard.ContainsText()) return;
+            var code = RelayClient.NormalizeRoomCode(Clipboard.GetText());
+            if (code.Length > 6) code = code[..6];
+            _roomCodeBox.Text = code;
+            _roomCodeBox.SelectionStart = _roomCodeBox.TextLength;
+        }
+        catch { }
+    }
+
+    private void UpdateAudioButtonVisual()
+    {
+        _audioCheck.Text = _audioCheck.Checked ? "Ligado" : "Desligado";
+        _audioCheck.BackColor = _audioCheck.Checked ? Color.FromArgb(20, 101, 133) : Surface3;
+        _audioCheck.ForeColor = _audioCheck.Checked ? Color.FromArgb(178, 234, 255) : TextMuted;
+        _audioCheck.FlatAppearance.MouseOverBackColor = _audioCheck.Checked ? Color.FromArgb(24, 116, 150) : Color.FromArgb(37, 55, 78);
+    }
+
+    private void UpdateTrayState()
+    {
+        if (!_tray.Visible) return;
+        var viewers = _relay.ViewerCount;
+        var status = !_sharing ? "Pronto" : viewers > 0 ? $"Ao vivo · {viewers} assistindo" : "Ligado · aguardando espectador";
+        _trayStatusItem.Text = status;
+        _trayToggleItem.Text = _sharing ? "Encerrar transmissão" : "Iniciar transmissão";
+        var tooltip = $"AKTela Capture · {status}";
+        _tray.Text = tooltip.Length <= 63 ? tooltip : "AKTela Capture";
     }
 
     private Button TitleButton(string text, int x)
     {
-        var b = new Button { Text = text, Bounds = new Rectangle(x, 12, 30, 30), BackColor = Bg, ForeColor = TextMuted, FlatStyle = FlatStyle.Flat, TabStop = false, Cursor = Cursors.Hand, Font = new Font("Segoe UI", text == "×" ? 13F : 10F) };
-        b.FlatAppearance.BorderSize = 0; return b;
+        var b = new Button
+        {
+            Text = text,
+            Bounds = new Rectangle(x, 13, 28, 28),
+            BackColor = Bg,
+            ForeColor = TextMuted,
+            FlatStyle = FlatStyle.Flat,
+            TabStop = false,
+            Cursor = Cursors.Hand,
+            Font = new Font("Segoe UI Variable Text", text == "×" ? 12F : 9F)
+        };
+        b.FlatAppearance.BorderSize = 0;
+        b.FlatAppearance.MouseOverBackColor = Surface2;
+        b.FlatAppearance.MouseDownBackColor = Surface3;
+        RoundControl(b, 8);
+        return b;
     }
 
     private static string ShortEncoder(string value) => value
@@ -758,13 +946,80 @@ internal sealed class MainForm : Form
         .Replace("NVIDIA NVENC", "NVENC")
         .Replace("Media Foundation", "Media Foundation");
 
-    private void SetStatus(string text, Color color) { _status.Text = text; _dot.BackColor = color; _dot.Invalidate(); }
-    private void Ui(Action action) { if (IsDisposed) return; try { if (InvokeRequired) BeginInvoke(action); else action(); } catch { } }
-    private static void PaintRoundedPanel(object? sender, PaintEventArgs e) { if (sender is not Panel p) return; e.Graphics.SmoothingMode = SmoothingMode.AntiAlias; using var path = RoundedRect(p.ClientRectangle, 12); using var brush = new SolidBrush(p.BackColor); e.Graphics.FillPath(brush, path); }
-    private static GraphicsPath RoundedRect(Rectangle r, int radius) { var d = radius * 2; var p = new GraphicsPath(); p.AddArc(r.X, r.Y, d, d, 180, 90); p.AddArc(r.Right - d, r.Y, d, d, 270, 90); p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90); p.AddArc(r.X, r.Bottom - d, d, d, 90, 90); p.CloseFigure(); return p; }
-    private static void RoundControl(Control c, int radius) { using var p = RoundedRect(new Rectangle(0, 0, c.Width, c.Height), radius); c.Region = new Region(p); }
-    private void ApplyRoundedWindow() { using var p = RoundedRect(new Rectangle(0, 0, Width, Height), 18); Region = new Region(p); }
+    private void SetStatus(string text, Color color)
+    {
+        _status.Text = text;
+        _dot.BackColor = color;
+        _dot.Invalidate();
+        UpdateTrayState();
+    }
 
+    private void Ui(Action action)
+    {
+        if (IsDisposed) return;
+        try { if (InvokeRequired) BeginInvoke(action); else action(); } catch { }
+    }
+
+    private static void PaintRoundedPanel(object? sender, PaintEventArgs e)
+    {
+        if (sender is not Panel p) return;
+        var radius = p.Tag is int value ? value : 12;
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        using var path = RoundedRect(new Rectangle(0, 0, p.Width - 1, p.Height - 1), radius);
+        using var brush = new SolidBrush(p.BackColor);
+        using var pen = new Pen(Stroke, 1F);
+        e.Graphics.FillPath(brush, path);
+        e.Graphics.DrawPath(pen, path);
+    }
+
+    private void PaintWindowBorder(object? sender, PaintEventArgs e)
+    {
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        using var path = RoundedRect(new Rectangle(0, 0, Width - 1, Height - 1), 18);
+        using var pen = new Pen(Color.FromArgb(39, 56, 78), 1F);
+        e.Graphics.DrawPath(pen, path);
+    }
+
+    private static GraphicsPath RoundedRect(Rectangle r, int radius)
+    {
+        var d = radius * 2;
+        var p = new GraphicsPath();
+        p.AddArc(r.X, r.Y, d, d, 180, 90);
+        p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+        p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+        p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+        p.CloseFigure();
+        return p;
+    }
+
+    private static void RoundControl(Control c, int radius)
+    {
+        using var p = RoundedRect(new Rectangle(0, 0, c.Width, c.Height), radius);
+        c.Region = new Region(p);
+    }
+
+    private void ApplyRoundedWindow()
+    {
+        using var p = RoundedRect(new Rectangle(0, 0, Width, Height), 18);
+        Region = new Region(p);
+    }
+
+    private void ApplyDwmAttributes()
+    {
+        try
+        {
+            var dark = 1;
+            DwmSetWindowAttribute(Handle, 20, ref dark, sizeof(int));
+            if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
+            {
+                var rounded = 2; // DWMWCP_ROUND
+                DwmSetWindowAttribute(Handle, 33, ref rounded, sizeof(int));
+            }
+        }
+        catch { }
+    }
+
+    [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int valueSize);
     [DllImport("user32.dll")] private static extern bool ReleaseCapture();
     [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr hWnd, int msg, int wp, int lp);
     [DllImport("user32.dll")] private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
