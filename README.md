@@ -1,9 +1,14 @@
-# AKTela Capture — reconstrução limpa v1
+# AKTela Capture — Clean v1.1
 
-Aplicativo Windows auxiliar da AKTela.
+Esta versão usa uma pasta de projeto nova (`AKTelaCaptureV1`) e uma lista explícita de arquivos C# no `.csproj`.
+Assim, arquivos antigos que ainda estejam no repositório não são compilados e não podem causar classes duplicadas.
 
-- Relay direto: `wss://aktela-relay.tacito1-filho.workers.dev/ws`
-- Não depende do relay antigo da Vercel.
-- Captura de tela/janela prioriza Desktop Duplication + NVENC.
-- `scale_d3d11` é tentado primeiro para redimensionamento na GPU; há fallbacks.
-- Áudio de janela usa Process Loopback; tela inteira exclui a árvore de processos do Discord.
+Relay: `wss://aktela-relay.tacito1-filho.workers.dev/ws`
+
+## Estrutura que deve ser enviada ao GitHub
+
+- `.github/workflows/build-windows.yml`
+- `AKTelaCaptureV1/`
+- `README.md`
+
+A pasta antiga `AKTelaCapture/` pode permanecer temporariamente no repositório; o novo workflow não a usa.

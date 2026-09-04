@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows10.0.19041.0</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>AKTela Capture</AssemblyName>
+    <RootNamespace>AKTelaCapture</RootNamespace>
+    <Product>AKTela Capture</Product>
+    <Version>1.1.0</Version>
+    <AssemblyVersion>1.1.0.0</AssemblyVersion>
+    <FileVersion>1.1.0.0</FileVersion>
+    <ApplicationIcon>Assets\AKTela.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <PublishTrimmed>false</PublishTrimmed>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <!-- Lista explícita: arquivos antigos no repositório nunca entram no build. -->
+  <ItemGroup>
+    <Compile Include="AppIcon.cs" />
+    <Compile Include="AudioStreamer.cs" />
+    <Compile Include="CursorTracker.cs" />
+    <Compile Include="FfmpegManager.cs" />
+    <Compile Include="H264AccessUnitReader.cs" />
+    <Compile Include="MainForm.cs" />
+    <Compile Include="Models.cs" />
+    <Compile Include="PacketProtocol.cs" />
+    <Compile Include="ProcessTreeHelper.cs" />
+    <Compile Include="Program.cs" />
+    <Compile Include="RelayClient.cs" />
+    <Compile Include="SourceEnumerator.cs" />
+    <Compile Include="VideoStreamer.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\AKTela.ico" LogicalName="AKTela.AppIcon.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="NAudio" Version="3.0.1" />
+    <PackageReference Include="Concentus" Version="2.2.2" />
+    <PackageReference Include="Concentus.Native" Version="1.5.2" />
+  </ItemGroup>
+</Project>
