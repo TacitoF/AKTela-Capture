@@ -9,6 +9,8 @@ internal sealed class VideoStreamer : IAsyncDisposable
     private Task? _runTask;
     private int _fps;
     private int _outputIndex;
+    private int _sourceWidth;
+    private int _sourceHeight;
     private int _bitrateMbps;
     private long _frames;
     private readonly Stopwatch _fpsClock = new();
@@ -20,11 +22,13 @@ internal sealed class VideoStreamer : IAsyncDisposable
 
     public bool IsRunning => _runTask is { IsCompleted: false };
 
-    public Task StartAsync(int outputIndex, int fps, CancellationToken token = default)
+    public Task StartAsync(int outputIndex, int sourceWidth, int sourceHeight, int fps, CancellationToken token = default)
     {
         if (IsRunning) return Task.CompletedTask;
 
         _outputIndex = Math.Max(0, outputIndex);
+        _sourceWidth = Math.Max(2, sourceWidth);
+        _sourceHeight = Math.Max(2, sourceHeight);
         _fps = fps >= 60 ? 60 : 30;
         _bitrateMbps = _fps == 60 ? 12 : 8;
         _cts = CancellationTokenSource.CreateLinkedTokenSource(token);
@@ -59,11 +63,24 @@ internal sealed class VideoStreamer : IAsyncDisposable
         try
         {
             var ffmpeg = await FfmpegManager.EnsureAsync(null, token);
-            var attempts = new[]
+            var attempts = new List<(string Name, Func<ProcessStartInfo> Builder)>();
+
+            // Em 1080p não precisamos do scale_d3d11. Isso evita uma etapa D3D11
+            // que pode falhar antes mesmo do encoder receber o primeiro frame.
+            if (_sourceWidth == 1920 && _sourceHeight == 1080)
             {
-                (Name: "GPU • NVIDIA NVENC", Builder: (Func<ProcessStartInfo>)(() => BuildNvenc(ffmpeg))),
-                (Name: "GPU • Media Foundation", Builder: (Func<ProcessStartInfo>)(() => BuildMediaFoundation(ffmpeg)))
-            };
+                attempts.Add(("GPU • NVIDIA NVENC", () => BuildNvencDirectDda(ffmpeg)));
+            }
+            else
+            {
+                attempts.Add(("GPU • NVIDIA NVENC", () => BuildNvencScaledDda(ffmpeg)));
+            }
+
+            // Fallback realmente independente: usa o capturador GDI do FFmpeg.
+            // É um pouco mais pesado que DXGI, mas evita que um problema em ddagrab/
+            // scale_d3d11 derrube também o encoder alternativo.
+            attempts.Add(("GPU • NVIDIA NVENC (compatibilidade)", () => BuildNvencGdi(ffmpeg)));
+            attempts.Add(("GPU • Media Foundation (compatibilidade)", () => BuildMediaFoundationGdi(ffmpeg)));
 
             var errors = new List<string>();
             foreach (var attempt in attempts)
@@ -71,7 +88,7 @@ internal sealed class VideoStreamer : IAsyncDisposable
                 if (token.IsCancellationRequested) return;
                 var result = await RunAttemptAsync(attempt.Name, attempt.Builder(), token);
                 if (result.CompletedNormally || token.IsCancellationRequested) return;
-                errors.Add($"{attempt.Name}: {result.ErrorMessage}");
+                errors.Add($"{attempt.Name}:{Environment.NewLine}{result.ErrorMessage}");
             }
 
             StreamError?.Invoke(errors.Count == 0
@@ -145,15 +162,19 @@ internal sealed class VideoStreamer : IAsyncDisposable
         var stderr = await stderrTask;
         if (emitted > 0 && process.ExitCode == 0) return (true, string.Empty);
 
-        var lastLines = string.Join(" ", stderr.Split('\n', StringSplitOptions.RemoveEmptyEntries).TakeLast(4));
-        return (false, string.IsNullOrWhiteSpace(lastLines)
+        var lines = stderr.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(x => x.Trim())
+            .Where(x => x.Length > 0)
+            .TakeLast(14);
+        var detail = string.Join(Environment.NewLine, lines);
+        return (false, string.IsNullOrWhiteSpace(detail)
             ? $"{name} encerrou sem gerar vídeo."
-            : lastLines.Trim());
+            : detail);
     }
 
-    private ProcessStartInfo BaseStartInfo(string ffmpeg)
+    private ProcessStartInfo NewStartInfo(string ffmpeg)
     {
-        var psi = new ProcessStartInfo(ffmpeg)
+        return new ProcessStartInfo(ffmpeg)
         {
             UseShellExecute = false,
             CreateNoWindow = true,
@@ -161,39 +182,35 @@ internal sealed class VideoStreamer : IAsyncDisposable
             RedirectStandardError = true,
             RedirectStandardInput = false
         };
-
-        Add(psi, "-hide_banner", "-loglevel", "warning",
-            "-f", "lavfi",
-            "-i", $"ddagrab=output_idx={_outputIndex}:framerate={_fps}:draw_mouse=1:dup_frames=1",
-            "-vf", "scale_d3d11=width=1920:height=1080:format=nv12");
-        return psi;
     }
 
-    private ProcessStartInfo BuildMediaFoundation(string ffmpeg)
+    private void AddDdaInput(ProcessStartInfo psi)
     {
-        var psi = BaseStartInfo(ffmpeg);
-        var bufferK = Math.Max(128, _bitrateMbps * 1000 / _fps);
         Add(psi,
-            "-c:v", "h264_mf",
-            "-hw_encoding", "1",
-            "-scenario", "display_remoting",
-            "-rate_control", "cbr",
-            "-b:v", $"{_bitrateMbps}M",
-            "-maxrate", $"{_bitrateMbps}M",
-            "-bufsize", $"{bufferK}k",
-            "-g", _fps.ToString(),
-            "-bf", "0",
-            "-fps_mode", "passthrough",
-            "-bsf:v", "h264_metadata=aud=insert",
-            "-flush_packets", "1",
-            "-f", "h264",
-            "pipe:1");
-        return psi;
+            "-hide_banner", "-loglevel", "warning",
+            "-f", "lavfi",
+            "-i", $"ddagrab=output_idx={_outputIndex}:framerate={_fps}:draw_mouse=1:dup_frames=1");
     }
 
-    private ProcessStartInfo BuildNvenc(string ffmpeg)
+    private void AddGdiInput(ProcessStartInfo psi)
     {
-        var psi = BaseStartInfo(ffmpeg);
+        Add(psi,
+            "-hide_banner", "-loglevel", "warning",
+            "-f", "gdigrab",
+            "-framerate", _fps.ToString(),
+            "-draw_mouse", "1",
+            "-video_size", $"{_sourceWidth}x{_sourceHeight}",
+            "-i", "desktop");
+
+        // Mantém a saída em 1080p. Quando a origem já é 1080p, o scale é evitado.
+        if (_sourceWidth != 1920 || _sourceHeight != 1080)
+            Add(psi, "-vf", "scale=1920:1080:flags=fast_bilinear,format=nv12");
+        else
+            Add(psi, "-vf", "format=nv12");
+    }
+
+    private void AddNvencOptions(ProcessStartInfo psi)
+    {
         var bufferK = Math.Max(128, _bitrateMbps * 1000 / _fps);
         Add(psi,
             "-c:v", "h264_nvenc",
@@ -210,6 +227,53 @@ internal sealed class VideoStreamer : IAsyncDisposable
             "-profile:v", "high",
             "-level:v", "4.2",
             "-spatial-aq", "1",
+            "-fps_mode", "passthrough",
+            "-bsf:v", "h264_metadata=aud=insert",
+            "-flush_packets", "1",
+            "-f", "h264",
+            "pipe:1");
+    }
+
+    private ProcessStartInfo BuildNvencDirectDda(string ffmpeg)
+    {
+        var psi = NewStartInfo(ffmpeg);
+        AddDdaInput(psi);
+        AddNvencOptions(psi);
+        return psi;
+    }
+
+    private ProcessStartInfo BuildNvencScaledDda(string ffmpeg)
+    {
+        var psi = NewStartInfo(ffmpeg);
+        AddDdaInput(psi);
+        Add(psi, "-vf", "scale_d3d11=width=1920:height=1080:format=nv12");
+        AddNvencOptions(psi);
+        return psi;
+    }
+
+    private ProcessStartInfo BuildNvencGdi(string ffmpeg)
+    {
+        var psi = NewStartInfo(ffmpeg);
+        AddGdiInput(psi);
+        AddNvencOptions(psi);
+        return psi;
+    }
+
+    private ProcessStartInfo BuildMediaFoundationGdi(string ffmpeg)
+    {
+        var psi = NewStartInfo(ffmpeg);
+        AddGdiInput(psi);
+        var bufferK = Math.Max(128, _bitrateMbps * 1000 / _fps);
+        Add(psi,
+            "-c:v", "h264_mf",
+            "-hw_encoding", "1",
+            "-scenario", "display_remoting",
+            "-rate_control", "cbr",
+            "-b:v", $"{_bitrateMbps}M",
+            "-maxrate", $"{_bitrateMbps}M",
+            "-bufsize", $"{bufferK}k",
+            "-g", _fps.ToString(),
+            "-bf", "0",
             "-fps_mode", "passthrough",
             "-bsf:v", "h264_metadata=aud=insert",
             "-flush_packets", "1",

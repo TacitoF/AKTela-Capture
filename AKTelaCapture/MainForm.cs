@@ -116,7 +116,7 @@ internal sealed class MainForm : Form
                 var progress=new Progress<int>(p=>Ui(()=>SetStatus($"Preparando encoder • {p}%",Yellow)));
                 await FfmpegManager.EnsureAsync(progress);
             }
-            await _video.StartAsync(display.FfmpegOutputIndex,fps);
+            await _video.StartAsync(display.FfmpegOutputIndex, display.Display.Width, display.Display.Height, fps);
             if(cfg.AudioEnabled) await _audio.StartAsync();
             Ui(RefreshStatus);
         }
