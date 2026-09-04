@@ -15,6 +15,7 @@ internal sealed class CaptureSourceOption
     public int Width { get; init; }
     public int Height { get; init; }
     public Rectangle ScreenBounds { get; init; }
+    public Rectangle CaptureDisplayBounds { get; init; }
     public int FfmpegOutputIndex { get; init; }
     public Display? Display { get; init; }
     public IntPtr WindowHandle { get; init; }

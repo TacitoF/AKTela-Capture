@@ -58,15 +58,23 @@ internal sealed class VideoStreamer : IAsyncDisposable
             var config = _config ?? throw new InvalidOperationException("Configuração de vídeo não definida.");
             var attempts = new List<(string Name, Func<ProcessStartInfo> Builder)>();
 
-            if (source.Kind == CaptureSourceKind.Display &&
-                source.Width == config.Width && source.Height == config.Height)
+            // Desktop Duplication captura a composição do desktop pela GPU e não sofre da tela preta
+            // do GDI ao tentar ler superfícies D3D11/D3D12 de jogos como GTA.
+            if (source.Kind == CaptureSourceKind.Window)
             {
-                attempts.Add(("NVIDIA NVENC", () => BuildNvencDirectDda(ffmpeg, source, config)));
+                attempts.Add(("NVIDIA NVENC · captura de jogo", () => BuildNvencDda(ffmpeg, source, config)));
+                attempts.Add(("Media Foundation · captura de jogo", () => BuildMediaFoundationDda(ffmpeg, source, config)));
+            }
+            else
+            {
+                attempts.Add(("NVIDIA NVENC", () => BuildNvencDda(ffmpeg, source, config)));
+                attempts.Add(("Media Foundation", () => BuildMediaFoundationDda(ffmpeg, source, config)));
             }
 
-            // O caminho GDI é o fallback mais compatível e também permite capturar uma janela específica.
-            attempts.Add(("NVIDIA NVENC (compatibilidade)", () => BuildNvencGdi(ffmpeg, source, config)));
-            attempts.Add(("Media Foundation", () => BuildMediaFoundationGdi(ffmpeg, source, config)));
+            // GDI fica somente como último fallback para apps comuns. Para jogos acelerados por GPU
+            // ele pode retornar uma imagem preta, por isso nunca é mais a primeira tentativa.
+            attempts.Add(("NVIDIA NVENC · compatibilidade", () => BuildNvencGdi(ffmpeg, source, config)));
+            attempts.Add(("Media Foundation · compatibilidade", () => BuildMediaFoundationGdi(ffmpeg, source, config)));
 
             var errors = new List<string>();
             foreach (var attempt in attempts)
@@ -144,7 +152,7 @@ internal sealed class VideoStreamer : IAsyncDisposable
             stderr.Split('\n', StringSplitOptions.RemoveEmptyEntries)
                 .Select(x => x.Trim())
                 .Where(x => x.Length > 0)
-                .TakeLast(16));
+                .TakeLast(18));
         return (false, string.IsNullOrWhiteSpace(detail) ? $"{name} encerrou sem gerar vídeo." : detail);
     }
 
@@ -157,12 +165,61 @@ internal sealed class VideoStreamer : IAsyncDisposable
         RedirectStandardInput = false
     };
 
-    private static void AddDdaInput(ProcessStartInfo psi, CaptureSourceOption source, StreamConfig config)
+    private static (int Width, int Height) AddDdaInput(ProcessStartInfo psi, CaptureSourceOption source, StreamConfig config)
     {
+        var parts = new List<string>
+        {
+            $"output_idx={Math.Max(0, source.FfmpegOutputIndex)}",
+            $"framerate={config.Fps}",
+            "draw_mouse=0",
+            "dup_frames=1"
+        };
+
+        var captureWidth = MakeEven(Math.Max(2, source.Width));
+        var captureHeight = MakeEven(Math.Max(2, source.Height));
+
+        if (source.Kind == CaptureSourceKind.Window)
+        {
+            var monitor = source.CaptureDisplayBounds;
+            if (monitor.Width <= 0 || monitor.Height <= 0)
+                monitor = Screen.FromRectangle(source.ScreenBounds).Bounds;
+
+            var localX = Math.Clamp(source.ScreenBounds.Left - monitor.Left, 0, Math.Max(0, monitor.Width - 2));
+            var localY = Math.Clamp(source.ScreenBounds.Top - monitor.Top, 0, Math.Max(0, monitor.Height - 2));
+            captureWidth = MakeEven(Math.Clamp(captureWidth, 2, Math.Max(2, monitor.Width - localX)));
+            captureHeight = MakeEven(Math.Clamp(captureHeight, 2, Math.Max(2, monitor.Height - localY)));
+
+            parts.Add($"video_size={captureWidth}x{captureHeight}");
+            parts.Add($"offset_x={localX}");
+            parts.Add($"offset_y={localY}");
+        }
+
         Add(psi,
             "-hide_banner", "-loglevel", "warning",
             "-f", "lavfi",
-            "-i", $"ddagrab=output_idx={Math.Max(0, source.FfmpegOutputIndex)}:framerate={config.Fps}:draw_mouse=0:dup_frames=1");
+            "-i", $"ddagrab={string.Join(":", parts)}");
+
+        return (captureWidth, captureHeight);
+    }
+
+    private static int MakeEven(int value) => Math.Max(2, value & ~1);
+
+    private static void AddDdaSoftwareDownloadAndScale(ProcessStartInfo psi, int sourceWidth, int sourceHeight, StreamConfig config)
+    {
+        var targetWidth = MakeEven(config.Width);
+        var targetHeight = MakeEven(config.Height);
+        var filter = sourceWidth == targetWidth && sourceHeight == targetHeight
+            ? "hwdownload,format=bgra,format=nv12"
+            : "hwdownload,format=bgra," + BuildScaleFilter(sourceWidth, sourceHeight, targetWidth, targetHeight);
+        Add(psi, "-vf", filter);
+    }
+
+    private static void AddDdaScaleForNvencIfNeeded(ProcessStartInfo psi, int sourceWidth, int sourceHeight, StreamConfig config)
+    {
+        if (sourceWidth == config.Width && sourceHeight == config.Height)
+            return; // zero-copy D3D11 -> NVENC quando não há redimensionamento
+
+        Add(psi, "-vf", "hwdownload,format=bgra," + BuildScaleFilter(sourceWidth, sourceHeight, config.Width, config.Height));
     }
 
     private static void AddGdiInput(ProcessStartInfo psi, CaptureSourceOption source, StreamConfig config)
@@ -187,6 +244,8 @@ internal sealed class VideoStreamer : IAsyncDisposable
 
     private static string BuildScaleFilter(int sourceWidth, int sourceHeight, int targetWidth, int targetHeight)
     {
+        targetWidth = MakeEven(targetWidth);
+        targetHeight = MakeEven(targetHeight);
         if (sourceWidth == targetWidth && sourceHeight == targetHeight) return "format=nv12";
         return $"scale={targetWidth}:{targetHeight}:force_original_aspect_ratio=decrease:flags=fast_bilinear," +
                $"pad={targetWidth}:{targetHeight}:(ow-iw)/2:(oh-ih)/2:color=black,format=nv12";
@@ -216,26 +275,8 @@ internal sealed class VideoStreamer : IAsyncDisposable
             "-f", "h264", "pipe:1");
     }
 
-    private static ProcessStartInfo BuildNvencDirectDda(string ffmpeg, CaptureSourceOption source, StreamConfig config)
+    private static void AddMediaFoundationOptions(ProcessStartInfo psi, StreamConfig config)
     {
-        var psi = NewStartInfo(ffmpeg);
-        AddDdaInput(psi, source, config);
-        AddNvencOptions(psi, config);
-        return psi;
-    }
-
-    private static ProcessStartInfo BuildNvencGdi(string ffmpeg, CaptureSourceOption source, StreamConfig config)
-    {
-        var psi = NewStartInfo(ffmpeg);
-        AddGdiInput(psi, source, config);
-        AddNvencOptions(psi, config);
-        return psi;
-    }
-
-    private static ProcessStartInfo BuildMediaFoundationGdi(string ffmpeg, CaptureSourceOption source, StreamConfig config)
-    {
-        var psi = NewStartInfo(ffmpeg);
-        AddGdiInput(psi, source, config);
         var bufferK = Math.Max(128, config.VideoBitrateMbps * 1000 / config.Fps);
         Add(psi,
             "-c:v", "h264_mf",
@@ -252,6 +293,39 @@ internal sealed class VideoStreamer : IAsyncDisposable
             "-bsf:v", "h264_metadata=aud=insert",
             "-flush_packets", "1",
             "-f", "h264", "pipe:1");
+    }
+
+    private static ProcessStartInfo BuildNvencDda(string ffmpeg, CaptureSourceOption source, StreamConfig config)
+    {
+        var psi = NewStartInfo(ffmpeg);
+        var size = AddDdaInput(psi, source, config);
+        AddDdaScaleForNvencIfNeeded(psi, size.Width, size.Height, config);
+        AddNvencOptions(psi, config);
+        return psi;
+    }
+
+    private static ProcessStartInfo BuildMediaFoundationDda(string ffmpeg, CaptureSourceOption source, StreamConfig config)
+    {
+        var psi = NewStartInfo(ffmpeg);
+        var size = AddDdaInput(psi, source, config);
+        AddDdaSoftwareDownloadAndScale(psi, size.Width, size.Height, config);
+        AddMediaFoundationOptions(psi, config);
+        return psi;
+    }
+
+    private static ProcessStartInfo BuildNvencGdi(string ffmpeg, CaptureSourceOption source, StreamConfig config)
+    {
+        var psi = NewStartInfo(ffmpeg);
+        AddGdiInput(psi, source, config);
+        AddNvencOptions(psi, config);
+        return psi;
+    }
+
+    private static ProcessStartInfo BuildMediaFoundationGdi(string ffmpeg, CaptureSourceOption source, StreamConfig config)
+    {
+        var psi = NewStartInfo(ffmpeg);
+        AddGdiInput(psi, source, config);
+        AddMediaFoundationOptions(psi, config);
         return psi;
     }
 

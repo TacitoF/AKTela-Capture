@@ -7,12 +7,16 @@ namespace AKTelaCapture;
 
 internal sealed class RelayClient : IAsyncDisposable
 {
-    private const string RelayBaseUrl = "wss://ak-tela-three.vercel.app/api/ws";
+    private const string RelayConfigUrl = "https://ak-tela-three.vercel.app/relay.json";
+    private const string FallbackRelayUrl = "wss://ak-tela-three.vercel.app/api/ws";
+    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(4) };
+
     private CancellationTokenSource? _cts;
     private Task? _runTask;
     private Channel<OutgoingMessage>? _outgoing;
     private string _roomCode = string.Empty;
     private StreamConfig? _config;
+    private string _relayBaseUrl = FallbackRelayUrl;
     private int _viewerCount;
     private long _latencyMs;
 
@@ -24,12 +28,13 @@ internal sealed class RelayClient : IAsyncDisposable
     public int ViewerCount => Volatile.Read(ref _viewerCount);
     public long LatencyMs => Volatile.Read(ref _latencyMs);
 
-    public Task StartAsync(string roomCode, StreamConfig config)
+    public async Task StartAsync(string roomCode, StreamConfig config)
     {
-        if (IsRunning) return Task.CompletedTask;
+        if (IsRunning) return;
         _roomCode = NormalizeRoomCode(roomCode);
         if (_roomCode.Length != 6) throw new ArgumentException("Informe o código de 6 caracteres exibido na Activity.");
         _config = config;
+        _relayBaseUrl = await ResolveRelayBaseUrlAsync();
         _outgoing = Channel.CreateBounded<OutgoingMessage>(new BoundedChannelOptions(24)
         {
             FullMode = BoundedChannelFullMode.DropOldest,
@@ -38,7 +43,6 @@ internal sealed class RelayClient : IAsyncDisposable
         });
         _cts = new CancellationTokenSource();
         _runTask = Task.Run(() => RunAsync(_cts.Token));
-        return Task.CompletedTask;
     }
 
     public bool TryQueuePacket(byte[] packet) => _outgoing?.Writer.TryWrite(new OutgoingMessage(packet, WebSocketMessageType.Binary)) == true;
@@ -66,6 +70,23 @@ internal sealed class RelayClient : IAsyncDisposable
         ViewerCountChanged?.Invoke(0); LatencyChanged?.Invoke(0); ConnectionChanged?.Invoke(false);
     }
 
+    private static async Task<string> ResolveRelayBaseUrlAsync()
+    {
+        try
+        {
+            using var response = await Http.GetAsync($"{RelayConfigUrl}?v={Environment.TickCount64}");
+            if (!response.IsSuccessStatusCode) return FallbackRelayUrl;
+            using var json = JsonDocument.Parse(await response.Content.ReadAsByteArrayAsync());
+            if (!json.RootElement.TryGetProperty("relayUrl", out var value)) return FallbackRelayUrl;
+            var raw = value.GetString()?.Trim();
+            if (string.IsNullOrWhiteSpace(raw)) return FallbackRelayUrl;
+            if (!Uri.TryCreate(raw, UriKind.Absolute, out var uri)) return FallbackRelayUrl;
+            if (uri.Scheme is not ("ws" or "wss")) return FallbackRelayUrl;
+            return raw.TrimEnd('/');
+        }
+        catch { return FallbackRelayUrl; }
+    }
+
     private async Task RunAsync(CancellationToken token)
     {
         while (!token.IsCancellationRequested)
@@ -74,7 +95,7 @@ internal sealed class RelayClient : IAsyncDisposable
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(token);
             try
             {
-                await socket.ConnectAsync(new Uri($"{RelayBaseUrl}?role=publisher&room={Uri.EscapeDataString(_roomCode)}"), token);
+                await socket.ConnectAsync(new Uri($"{_relayBaseUrl}?role=publisher&room={Uri.EscapeDataString(_roomCode)}"), token);
                 await SendConfigAsync(socket, token);
                 ConnectionChanged?.Invoke(true);
                 var sender = SendLoopAsync(socket, linked.Token);

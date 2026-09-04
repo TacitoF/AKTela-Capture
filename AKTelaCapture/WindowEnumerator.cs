@@ -40,6 +40,11 @@ internal static class WindowEnumerator
                 return true;
 
             var shortTitle = text.Length > 46 ? text[..43] + "..." : text;
+            var screens = Screen.AllScreens;
+            var captureScreen = Screen.FromRectangle(bounds);
+            var outputIndex = Array.FindIndex(screens, s => s.DeviceName == captureScreen.DeviceName);
+            if (outputIndex < 0) outputIndex = 0;
+
             list.Add(new CaptureSourceOption
             {
                 Kind = CaptureSourceKind.Window,
@@ -47,6 +52,8 @@ internal static class WindowEnumerator
                 Width = bounds.Width,
                 Height = bounds.Height,
                 ScreenBounds = bounds,
+                CaptureDisplayBounds = captureScreen.Bounds,
+                FfmpegOutputIndex = outputIndex,
                 WindowHandle = hwnd,
                 ProcessId = (int)pid,
                 ProcessName = processName,

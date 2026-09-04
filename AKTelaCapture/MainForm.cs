@@ -479,6 +479,7 @@ internal sealed class MainForm : Form
                             Width = display.Width,
                             Height = display.Height,
                             ScreenBounds = bounds,
+                            CaptureDisplayBounds = bounds,
                             FfmpegOutputIndex = ff,
                             Display = display
                         });
