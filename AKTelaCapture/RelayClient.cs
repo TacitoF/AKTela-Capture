@@ -30,7 +30,7 @@ internal sealed class RelayClient : IAsyncDisposable
         _roomCode = NormalizeRoomCode(roomCode);
         if (_roomCode.Length != 6) throw new ArgumentException("Informe o código de 6 caracteres exibido na Activity.");
         _config = config;
-        _outgoing = Channel.CreateBounded<OutgoingMessage>(new BoundedChannelOptions(128)
+        _outgoing = Channel.CreateBounded<OutgoingMessage>(new BoundedChannelOptions(24)
         {
             FullMode = BoundedChannelFullMode.DropOldest,
             SingleReader = true,

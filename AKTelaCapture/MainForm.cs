@@ -52,7 +52,7 @@ internal sealed class MainForm : Form
     {
         _cursor = new CursorTracker(_relay);
         Text = "AKTela Capture";
-        ClientSize = new Size(390, 568);
+        ClientSize = new Size(390, 542);
         StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.None;
         BackColor = Bg;
@@ -282,16 +282,8 @@ internal sealed class MainForm : Form
 
         Controls.Add(new Label
         {
-            Text = "Cursor automático: visível no desktop e oculto no modo Jogo.",
-            Bounds = new Rectangle(24, 504, 342, 20),
-            TextAlign = ContentAlignment.MiddleCenter,
-            ForeColor = TextMuted,
-            Font = new Font("Segoe UI", 7.6F)
-        });
-        Controls.Add(new Label
-        {
             Text = "Ctrl + Shift + S inicia ou encerra",
-            Bounds = new Rectangle(24, 529, 342, 18),
+            Bounds = new Rectangle(24, 508, 342, 18),
             TextAlign = ContentAlignment.MiddleCenter,
             ForeColor = Color.FromArgb(116, 122, 136),
             Font = new Font("Segoe UI", 7.2F)
