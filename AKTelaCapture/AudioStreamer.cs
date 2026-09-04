@@ -65,7 +65,6 @@ internal sealed class AudioStreamer : IAsyncDisposable
             if (_recorder is null) return;
             _buffer = new BufferedWaveProvider(format)
             {
-                BufferDuration = TimeSpan.FromMilliseconds(220),
                 DiscardOnBufferOverflow = true
             };
             _recorder.DataAvailable += OnDataAvailable;

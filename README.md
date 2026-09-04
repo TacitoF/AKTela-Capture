@@ -1,3 +1,7 @@
+# AKTela Capture v0.4.1
+
+Correção de compatibilidade com NAudio 3.0.1: `BufferedWaveProvider.BufferDuration` passou a ser somente leitura. O buffer usa o valor padrão da biblioteca; o encoder continua consumindo áudio em blocos de 20 ms, então isso não adiciona 5 s de latência.
+
 # AKTela Capture v0.4
 
 Versão focada em usabilidade, baixa latência e áudio correto para uso junto ao Discord.
