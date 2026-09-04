@@ -1,4 +1,4 @@
-# AKTela Capture v0.3
+# AKTela Capture v0.3.2
 
 Capture nativo para Windows focado em 1080p com baixo impacto.
 
@@ -14,3 +14,12 @@ Capture nativo para Windows focado em 1080p com baixo impacto.
 
 ## Build
 O workflow `.github/workflows/build-windows.yml` continua gerando `AKTelaCapture.exe` no GitHub Actions.
+
+
+## Atualização v0.3.2.2
+Se estiver atualizando a partir da v0.2.x, este pacote sobrescreve o antigo `CaptureController.cs`, que não é mais usado.
+
+
+## v0.3.2
+- Corrige o fallback Media Foundation removendo `-profile:v high` e `-level:v 4.2`, que não são aceitos dessa forma por `h264_mf` em builds atuais do FFmpeg.
+- Se NVENC e Media Foundation falharem, agora o erro mostra os dois motivos separadamente.

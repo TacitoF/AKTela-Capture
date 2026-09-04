@@ -65,16 +65,18 @@ internal sealed class VideoStreamer : IAsyncDisposable
                 (Name: "GPU • Media Foundation", Builder: (Func<ProcessStartInfo>)(() => BuildMediaFoundation(ffmpeg)))
             };
 
-            string lastError = "Não foi possível iniciar o encoder de vídeo.";
+            var errors = new List<string>();
             foreach (var attempt in attempts)
             {
                 if (token.IsCancellationRequested) return;
                 var result = await RunAttemptAsync(attempt.Name, attempt.Builder(), token);
                 if (result.CompletedNormally || token.IsCancellationRequested) return;
-                lastError = result.ErrorMessage;
+                errors.Add($"{attempt.Name}: {result.ErrorMessage}");
             }
 
-            StreamError?.Invoke(lastError);
+            StreamError?.Invoke(errors.Count == 0
+                ? "Não foi possível iniciar o encoder de vídeo."
+                : string.Join(Environment.NewLine + Environment.NewLine, errors));
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -181,8 +183,6 @@ internal sealed class VideoStreamer : IAsyncDisposable
             "-bufsize", $"{bufferK}k",
             "-g", _fps.ToString(),
             "-bf", "0",
-            "-profile:v", "high",
-            "-level:v", "4.2",
             "-fps_mode", "passthrough",
             "-bsf:v", "h264_metadata=aud=insert",
             "-flush_packets", "1",
