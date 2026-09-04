@@ -1,13 +1,10 @@
-# AKTela Capture v0.3.3
+# AKTela Capture v0.3.4
 
-Correção do pipeline de vídeo.
+Correções desta versão:
 
-## O que mudou
+- Corrige o cursor piscando no Windows quando o fallback `gdigrab` é usado. O cursor do sistema não é desenhado pelo FFmpeg nesta versão (`draw_mouse=0`).
+- Força a saída do encoder exatamente em 30 ou 60 FPS com `-r:v` + `-fps_mode cfr`.
+- Corrige o indicador de FPS da interface, que podia mostrar 60 em uma transmissão configurada para 30 por causa da forma como alguns fluxos H.264 do Media Foundation são divididos em access units.
+- Mantém 1080p e os fallbacks NVENC / Media Foundation da v0.3.3.
 
-- Em telas 1920×1080, tenta primeiro `ddagrab -> h264_nvenc` diretamente, sem `scale_d3d11`.
-- Se o caminho DXGI/D3D11 falhar, usa um fallback de captura diferente (`gdigrab`) em vez de repetir o mesmo pipeline quebrado.
-- Tenta NVENC no fallback e, por último, Media Foundation.
-- Mensagens de erro agora preservam mais linhas do FFmpeg para diagnóstico.
-- Mantém 1080p, 30/60 FPS, CBR e parâmetros de baixa latência.
-
-O fallback GDI é apenas de compatibilidade e pode consumir um pouco mais CPU que o caminho DXGI principal.
+> Observação: nesta versão o cursor do Windows não aparece para os espectadores quando o caminho de compatibilidade GDI é usado. Isso elimina o flicker local. Uma sobreposição de cursor independente pode ser adicionada depois sem mover/piscar o cursor real do usuário.

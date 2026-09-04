@@ -138,9 +138,12 @@ internal sealed class VideoStreamer : IAsyncDisposable
 
                     if (_fpsClock.ElapsedMilliseconds >= 1000)
                     {
-                        var elapsed = Math.Max(0.001, _fpsClock.Elapsed.TotalSeconds);
-                        var count = Interlocked.Exchange(ref _frames, 0);
-                        FpsChanged?.Invoke(count / elapsed);
+                        // O fluxo de saída é forçado a CFR pelo FFmpeg. Alguns encoders
+                        // Media Foundation podem expor mais de um access unit por quadro,
+                        // então contar NAL/AUD pode mostrar 2x o FPS real. A UI exibe a
+                        // taxa efetivamente solicitada ao encoder, evitando essa leitura falsa.
+                        Interlocked.Exchange(ref _frames, 0);
+                        FpsChanged?.Invoke(_fps);
                         _fpsClock.Restart();
                     }
                 }
@@ -189,7 +192,7 @@ internal sealed class VideoStreamer : IAsyncDisposable
         Add(psi,
             "-hide_banner", "-loglevel", "warning",
             "-f", "lavfi",
-            "-i", $"ddagrab=output_idx={_outputIndex}:framerate={_fps}:draw_mouse=1:dup_frames=1");
+            "-i", $"ddagrab=output_idx={_outputIndex}:framerate={_fps}:draw_mouse=0:dup_frames=1");
     }
 
     private void AddGdiInput(ProcessStartInfo psi)
@@ -198,7 +201,7 @@ internal sealed class VideoStreamer : IAsyncDisposable
             "-hide_banner", "-loglevel", "warning",
             "-f", "gdigrab",
             "-framerate", _fps.ToString(),
-            "-draw_mouse", "1",
+            "-draw_mouse", "0",
             "-video_size", $"{_sourceWidth}x{_sourceHeight}",
             "-i", "desktop");
 
@@ -227,7 +230,8 @@ internal sealed class VideoStreamer : IAsyncDisposable
             "-profile:v", "high",
             "-level:v", "4.2",
             "-spatial-aq", "1",
-            "-fps_mode", "passthrough",
+            "-r:v", _fps.ToString(),
+            "-fps_mode", "cfr",
             "-bsf:v", "h264_metadata=aud=insert",
             "-flush_packets", "1",
             "-f", "h264",
@@ -274,7 +278,8 @@ internal sealed class VideoStreamer : IAsyncDisposable
             "-bufsize", $"{bufferK}k",
             "-g", _fps.ToString(),
             "-bf", "0",
-            "-fps_mode", "passthrough",
+            "-r:v", _fps.ToString(),
+            "-fps_mode", "cfr",
             "-bsf:v", "h264_metadata=aud=insert",
             "-flush_packets", "1",
             "-f", "h264",

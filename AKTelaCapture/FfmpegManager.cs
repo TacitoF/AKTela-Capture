@@ -24,7 +24,7 @@ internal static class FfmpegManager
         try
         {
             using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
-            client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("AKTelaCapture", "0.3"));
+            client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("AKTelaCapture", "0.3.4"));
 
             using var response = await client.GetAsync(DownloadUrl, HttpCompletionOption.ResponseHeadersRead, token);
             response.EnsureSuccessStatusCode();
