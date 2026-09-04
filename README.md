@@ -1,30 +1,23 @@
-# AKTela Capture
+# AKTela Capture v0.2
 
-Aplicativo Windows auxiliar da AKTela.
+Cliente Windows leve para capturar a tela e enviar quadros compactados para a AKTela Activity.
 
-## Objetivo desta versão
+## Fluxo de teste
 
-- Interface pequena e vertical.
-- Botão único para ligar/desligar a captura.
-- Seleção de monitor.
-- Captura por DirectX 11 / Desktop Duplication.
-- Limite padrão de 30 FPS para reduzir uso de recursos.
-- Pode ser minimizado para a bandeja do Windows.
-- Não precisa de administrador.
+1. Abra a AKTela dentro do Discord.
+2. Copie o código de 6 caracteres exibido na parte inferior da Activity.
+3. Cole o código em **Código da Activity** no AKTela Capture.
+4. Escolha a tela.
+5. Clique em **Ligar compartilhamento**.
+6. O próprio transmissor e os demais participantes na mesma Activity devem começar a ver a imagem.
 
-> Nesta primeira versão o app já captura a tela localmente, mas ainda não envia o vídeo para a Activity. A próxima etapa do projeto conecta os quadros ao relay/WebSocket da AKTela e ao player dentro do Discord.
+## Modo leve desta versão
 
-## Gerar o EXE sem instalar ferramentas no PC
+- Captura DX11 Desktop Duplication.
+- Até 15 FPS no stream experimental.
+- Downscale 2× em telas HD/Full HD para reduzir cópia, CPU e banda.
+- JPEG qualidade 52 para validar o fluxo completo.
+- Se ninguém estiver assistindo, a compactação dos frames é pausada automaticamente.
+- A fila mantém somente o frame mais recente para não acumular atraso.
 
-1. Crie um repositório no GitHub e envie todo o conteúdo desta pasta.
-2. Abra a aba **Actions**.
-3. Abra **Gerar AKTela Capture.exe**.
-4. Clique em **Run workflow**.
-5. Quando terminar, baixe o artefato `AKTela-Capture-Windows-x64`.
-6. Extraia e execute `AKTelaCapture.exe`.
-
-O workflow usa um computador Windows do GitHub para compilar o executável.
-
-## Observação sobre o Windows SmartScreen
-
-Como o executável ainda não possui certificado de assinatura de código, o Windows pode exibir um aviso do SmartScreen. Isso é esperado durante o desenvolvimento.
+Depois de validar o fluxo, o encoder JPEG pode ser substituído por vídeo com aceleração de hardware.

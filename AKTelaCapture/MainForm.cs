@@ -13,23 +13,30 @@ internal sealed class MainForm : Form
     private static readonly Color Accent = Color.FromArgb(91, 105, 255);
     private static readonly Color AccentHover = Color.FromArgb(105, 118, 255);
     private static readonly Color Green = Color.FromArgb(62, 207, 142);
+    private static readonly Color Yellow = Color.FromArgb(240, 178, 50);
     private static readonly Color Red = Color.FromArgb(240, 92, 102);
 
     private readonly CaptureController _capture = new();
+    private readonly RelayClient _relay = new();
+    private readonly AppSettings _settings = AppSettings.Load();
     private readonly ComboBox _displayCombo = new();
+    private readonly TextBox _roomCodeBox = new();
     private readonly Button _toggleButton = new();
     private readonly Label _statusLabel = new();
     private readonly Panel _statusDot = new();
     private readonly Label _fpsLabel = new();
     private readonly Label _resolutionLabel = new();
+    private readonly Label _viewersLabel = new();
     private readonly NotifyIcon _trayIcon = new();
+
     private bool _isCapturing;
+    private bool _relayConnected;
     private bool _allowClose;
 
     public MainForm()
     {
         Text = "AKTela Capture";
-        ClientSize = new Size(382, 548);
+        ClientSize = new Size(382, 638);
         StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.None;
         BackColor = Bg;
@@ -44,8 +51,26 @@ internal sealed class MainForm : Form
         LoadDisplays();
         BuildTrayIcon();
 
+        _capture.ShouldEncodeFrame = () => _relay.ViewerCount > 0;
         _capture.FpsChanged += fps => BeginInvokeSafe(() => _fpsLabel.Text = fps <= 0 ? "—" : $"{fps:0} FPS");
+        _capture.FrameReady += frame => _relay.TryQueueFrame(frame);
         _capture.CaptureError += message => BeginInvokeSafe(() => OnCaptureError(message));
+
+        _relay.ConnectionChanged += connected => BeginInvokeSafe(() =>
+        {
+            _relayConnected = connected;
+            RefreshLiveStatus();
+        });
+        _relay.ViewerCountChanged += count => BeginInvokeSafe(() =>
+        {
+            _viewersLabel.Text = count.ToString();
+            RefreshLiveStatus();
+        });
+        _relay.RelayError += _ => BeginInvokeSafe(() =>
+        {
+            if (_isCapturing && !_relayConnected)
+                SetStatus("Reconectando ao servidor…", Yellow);
+        });
 
         Shown += (_, _) => ApplyRoundedWindow();
         Resize += (_, _) => ApplyRoundedWindow();
@@ -106,26 +131,26 @@ internal sealed class MainForm : Form
             TextAlign = ContentAlignment.MiddleCenter,
             Font = new Font("Segoe UI Semibold", 17F, FontStyle.Bold),
             ForeColor = TextMain,
-            Location = new Point(28, 72),
+            Location = new Point(28, 70),
             Size = new Size(326, 34)
         };
         Controls.Add(heading);
 
         var subtitle = new Label
         {
-            Text = "O Capture fica leve em segundo plano enquanto você usa o Discord.",
+            Text = "Cole o código mostrado na Activity e deixe o Capture trabalhar em segundo plano.",
             AutoSize = false,
             TextAlign = ContentAlignment.TopCenter,
             Font = new Font("Segoe UI", 9F),
             ForeColor = TextMuted,
-            Location = new Point(37, 110),
-            Size = new Size(308, 42)
+            Location = new Point(37, 108),
+            Size = new Size(308, 43)
         };
         Controls.Add(subtitle);
 
         var statusCard = new Panel
         {
-            Location = new Point(31, 160),
+            Location = new Point(31, 157),
             Size = new Size(320, 54),
             BackColor = Card
         };
@@ -150,16 +175,45 @@ internal sealed class MainForm : Form
         _statusLabel.Location = new Point(38, 18);
         statusCard.Controls.Add(_statusLabel);
 
-        var monitorLabel = new Label
+        Controls.Add(new Label
+        {
+            Text = "Código da Activity",
+            AutoSize = true,
+            ForeColor = TextMuted,
+            Location = new Point(33, 228)
+        });
+
+        _roomCodeBox.Location = new Point(31, 251);
+        _roomCodeBox.Size = new Size(320, 32);
+        _roomCodeBox.BorderStyle = BorderStyle.FixedSingle;
+        _roomCodeBox.BackColor = Card2;
+        _roomCodeBox.ForeColor = TextMain;
+        _roomCodeBox.CharacterCasing = CharacterCasing.Upper;
+        _roomCodeBox.MaxLength = 6;
+        _roomCodeBox.TextAlign = HorizontalAlignment.Center;
+        _roomCodeBox.Font = new Font("Consolas", 13F, FontStyle.Bold);
+        _roomCodeBox.Text = RelayClient.NormalizeRoomCode(_settings.RoomCode);
+        _roomCodeBox.TextChanged += (_, _) =>
+        {
+            var caret = _roomCodeBox.SelectionStart;
+            var normalized = RelayClient.NormalizeRoomCode(_roomCodeBox.Text);
+            if (_roomCodeBox.Text != normalized)
+            {
+                _roomCodeBox.Text = normalized;
+                _roomCodeBox.SelectionStart = Math.Min(caret, normalized.Length);
+            }
+        };
+        Controls.Add(_roomCodeBox);
+
+        Controls.Add(new Label
         {
             Text = "Tela",
             AutoSize = true,
             ForeColor = TextMuted,
-            Location = new Point(33, 238)
-        };
-        Controls.Add(monitorLabel);
+            Location = new Point(33, 302)
+        });
 
-        _displayCombo.Location = new Point(31, 261);
+        _displayCombo.Location = new Point(31, 325);
         _displayCombo.Size = new Size(320, 34);
         _displayCombo.DropDownStyle = ComboBoxStyle.DropDownList;
         _displayCombo.FlatStyle = FlatStyle.Flat;
@@ -169,43 +223,48 @@ internal sealed class MainForm : Form
         _displayCombo.SelectedIndexChanged += (_, _) => UpdateResolutionLabel();
         Controls.Add(_displayCombo);
 
-        var modeLabel = new Label
+        Controls.Add(new Label
         {
             Text = "Modo leve",
             AutoSize = true,
             ForeColor = TextMuted,
-            Location = new Point(33, 314)
-        };
-        Controls.Add(modeLabel);
+            Location = new Point(33, 378)
+        });
 
         var perfCard = new Panel
         {
-            Location = new Point(31, 337),
-            Size = new Size(320, 58),
+            Location = new Point(31, 401),
+            Size = new Size(320, 64),
             BackColor = Card
         };
         perfCard.Paint += PaintRoundedPanel;
         Controls.Add(perfCard);
 
-        var fpsCaption = new Label { Text = "Captura", ForeColor = TextMuted, AutoSize = true, Location = new Point(18, 10) };
+        perfCard.Controls.Add(new Label { Text = "Captura", ForeColor = TextMuted, AutoSize = true, Location = new Point(16, 9) });
         _fpsLabel.Text = "—";
         _fpsLabel.ForeColor = TextMain;
         _fpsLabel.AutoSize = true;
         _fpsLabel.Font = new Font("Segoe UI Semibold", 9.5F, FontStyle.Bold);
-        _fpsLabel.Location = new Point(18, 29);
-        perfCard.Controls.Add(fpsCaption);
+        _fpsLabel.Location = new Point(16, 31);
         perfCard.Controls.Add(_fpsLabel);
 
-        var resolutionCaption = new Label { Text = "Fonte", ForeColor = TextMuted, AutoSize = true, Location = new Point(166, 10) };
+        perfCard.Controls.Add(new Label { Text = "Fonte", ForeColor = TextMuted, AutoSize = true, Location = new Point(120, 9) });
         _resolutionLabel.Text = "—";
         _resolutionLabel.ForeColor = TextMain;
         _resolutionLabel.AutoSize = true;
         _resolutionLabel.Font = new Font("Segoe UI Semibold", 9.5F, FontStyle.Bold);
-        _resolutionLabel.Location = new Point(166, 29);
-        perfCard.Controls.Add(resolutionCaption);
+        _resolutionLabel.Location = new Point(120, 31);
         perfCard.Controls.Add(_resolutionLabel);
 
-        _toggleButton.Location = new Point(31, 418);
+        perfCard.Controls.Add(new Label { Text = "Assistindo", ForeColor = TextMuted, AutoSize = true, Location = new Point(250, 9) });
+        _viewersLabel.Text = "0";
+        _viewersLabel.ForeColor = TextMain;
+        _viewersLabel.AutoSize = true;
+        _viewersLabel.Font = new Font("Segoe UI Semibold", 9.5F, FontStyle.Bold);
+        _viewersLabel.Location = new Point(250, 31);
+        perfCard.Controls.Add(_viewersLabel);
+
+        _toggleButton.Location = new Point(31, 489);
         _toggleButton.Size = new Size(320, 62);
         _toggleButton.FlatStyle = FlatStyle.Flat;
         _toggleButton.FlatAppearance.BorderSize = 0;
@@ -221,17 +280,16 @@ internal sealed class MainForm : Form
         Controls.Add(_toggleButton);
         RoundControl(_toggleButton, 14);
 
-        var foot = new Label
+        Controls.Add(new Label
         {
-            Text = "Pode minimizar depois de ligar — ele continua funcionando na bandeja.",
+            Text = "Depois de ligar, você pode minimizar. O app continua na bandeja do Windows.",
             AutoSize = false,
             TextAlign = ContentAlignment.MiddleCenter,
             ForeColor = TextMuted,
-            Location = new Point(33, 493),
-            Size = new Size(316, 35),
+            Location = new Point(33, 566),
+            Size = new Size(316, 42),
             Font = new Font("Segoe UI", 8.3F)
-        };
-        Controls.Add(foot);
+        });
     }
 
     private Button MakeTitleButton(string text, int x)
@@ -288,21 +346,40 @@ internal sealed class MainForm : Form
             return;
         }
 
-        if (_displayCombo.SelectedItem is not DisplayOption selected)
-            return;
+        if (_displayCombo.SelectedItem is not DisplayOption selected) return;
 
+        var roomCode = RelayClient.NormalizeRoomCode(_roomCodeBox.Text);
+        if (roomCode.Length != 6 || roomCode.Any(c => !(c is >= 'A' and <= 'Z' || c is >= '2' and <= '9')))
+        {
+            MessageBox.Show(this,
+                "Copie o código de 6 caracteres mostrado na parte inferior da AKTela dentro do Discord.",
+                "Código da Activity",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+            _roomCodeBox.Focus();
+            return;
+        }
+
+        _settings.RoomCode = roomCode;
+        _settings.Save();
         _toggleButton.Enabled = false;
+        SetStatus("Conectando ao servidor…", Yellow);
+
         try
         {
-            await _capture.StartAsync(selected.Display, 30);
+            await _relay.StartAsync(roomCode);
+            await _capture.StartAsync(selected.Display, 15);
+
             _isCapturing = true;
             _displayCombo.Enabled = false;
+            _roomCodeBox.Enabled = false;
             _toggleButton.Text = "Desligar compartilhamento";
             _toggleButton.BackColor = Red;
-            SetStatus("Compartilhamento ligado", Green);
+            RefreshLiveStatus();
         }
         catch (Exception ex)
         {
+            await _relay.StopAsync();
             OnCaptureError(ex.Message);
         }
         finally
@@ -315,30 +392,52 @@ internal sealed class MainForm : Form
     {
         _toggleButton.Enabled = false;
         await _capture.StopAsync();
+        await _relay.StopAsync();
+
         _isCapturing = false;
+        _relayConnected = false;
         _displayCombo.Enabled = true;
+        _roomCodeBox.Enabled = true;
         _toggleButton.Text = "Ligar compartilhamento";
         _toggleButton.BackColor = Accent;
-        SetStatus("Pronto para compartilhar", TextMuted);
         _fpsLabel.Text = "—";
+        _viewersLabel.Text = "0";
+        SetStatus("Pronto para compartilhar", TextMuted);
         _toggleButton.Enabled = true;
+    }
+
+    private void RefreshLiveStatus()
+    {
+        if (!_isCapturing) return;
+
+        if (!_relayConnected)
+        {
+            SetStatus("Reconectando ao servidor…", Yellow);
+            return;
+        }
+
+        var viewers = _relay.ViewerCount;
+        SetStatus(viewers > 0
+            ? $"Transmitindo • {viewers} assistindo"
+            : "Ligado • aguardando espectadores", Green);
     }
 
     private void OnCaptureError(string message)
     {
         _isCapturing = false;
         _displayCombo.Enabled = true;
+        _roomCodeBox.Enabled = true;
         _toggleButton.Enabled = true;
         _toggleButton.Text = "Tentar novamente";
         _toggleButton.BackColor = Accent;
         SetStatus("Erro na captura", Red);
-        MessageBox.Show(this, message, "Não foi possível capturar a tela", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        MessageBox.Show(this, message, "Não foi possível compartilhar", MessageBoxButtons.OK, MessageBoxIcon.Warning);
     }
 
     private void UpdateResolutionLabel()
     {
         if (_displayCombo.SelectedItem is DisplayOption selected)
-            _resolutionLabel.Text = $"{selected.Display.Width} × {selected.Display.Height}";
+            _resolutionLabel.Text = $"{selected.Display.Width}×{selected.Display.Height}";
     }
 
     private void SetStatus(string text, Color dotColor)
@@ -354,15 +453,13 @@ internal sealed class MainForm : Form
         menu.Items.Add("Abrir AKTela Capture", null, (_, _) => RestoreFromTray());
         menu.Items.Add("Desligar compartilhamento", null, async (_, _) =>
         {
-            if (_isCapturing)
-                await StopCaptureAsync();
+            if (_isCapturing) await StopCaptureAsync();
         });
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Sair", null, async (_, _) =>
         {
             _allowClose = true;
-            if (_isCapturing)
-                await StopCaptureAsync();
+            if (_isCapturing) await StopCaptureAsync();
             Close();
         });
 
@@ -403,18 +500,20 @@ internal sealed class MainForm : Form
         }
 
         if (_isCapturing)
+        {
             await _capture.StopAsync();
+            await _relay.StopAsync();
+        }
 
         _trayIcon.Visible = false;
         _trayIcon.Dispose();
         _capture.Dispose();
+        await _relay.DisposeAsync();
     }
 
     private void PaintRoundedPanel(object? sender, PaintEventArgs e)
     {
-        if (sender is not Panel panel)
-            return;
-
+        if (sender is not Panel panel) return;
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
         using var path = RoundedRect(panel.ClientRectangle, 14);
         using var brush = new SolidBrush(panel.BackColor);
@@ -447,20 +546,14 @@ internal sealed class MainForm : Form
 
     private void BeginInvokeSafe(Action action)
     {
-        if (IsDisposed || Disposing)
-            return;
-
-        if (InvokeRequired)
-            BeginInvoke(action);
-        else
-            action();
+        if (IsDisposed || Disposing) return;
+        if (InvokeRequired) BeginInvoke(action);
+        else action();
     }
 
     private void DragWindow(object? sender, MouseEventArgs e)
     {
-        if (e.Button != MouseButtons.Left)
-            return;
-
+        if (e.Button != MouseButtons.Left) return;
         ReleaseCapture();
         SendMessage(Handle, 0xA1, 0x2, 0);
     }
