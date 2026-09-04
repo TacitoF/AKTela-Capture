@@ -5,8 +5,12 @@ namespace AKTelaCapture;
 internal sealed class AppSettings
 {
     public string RoomCode { get; set; } = string.Empty;
-    public int Fps { get; set; } = 30;
-    public bool IncludeSystemAudio { get; set; } = true;
+    public string Preset { get; set; } = "Jogo";
+    public string Quality { get; set; } = "1080p60";
+    public string SourceType { get; set; } = "Janela";
+    public string CursorPolicy { get; set; } = "Auto";
+    public string AudioMode { get; set; } = "Fonte";
+    public bool MinimizeAfterStart { get; set; } = true;
 
     private static string SettingsDirectory => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -36,7 +40,6 @@ internal sealed class AppSettings
         }
         catch
         {
-            // Preferências são conveniência; falha ao salvar não impede a transmissão.
         }
     }
 }

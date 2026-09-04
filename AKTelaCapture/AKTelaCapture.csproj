@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net9.0-windows10.0.19041.0</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
@@ -21,7 +21,7 @@
 
   <ItemGroup>
     <PackageReference Include="ScreenCapture.NET.DX11" Version="3.0.0" />
-    <PackageReference Include="NAudio" Version="2.3.0" />
+    <PackageReference Include="NAudio" Version="3.0.1" />
     <PackageReference Include="Concentus" Version="2.2.2" />
     <PackageReference Include="Concentus.Native" Version="1.5.2" />
   </ItemGroup>

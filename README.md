@@ -1,10 +1,27 @@
-# AKTela Capture v0.3.4
+# AKTela Capture v0.4
 
-Correções desta versão:
+Versão focada em usabilidade, baixa latência e áudio correto para uso junto ao Discord.
 
-- Corrige o cursor piscando no Windows quando o fallback `gdigrab` é usado. O cursor do sistema não é desenhado pelo FFmpeg nesta versão (`draw_mouse=0`).
-- Força a saída do encoder exatamente em 30 ou 60 FPS com `-r:v` + `-fps_mode cfr`.
-- Corrige o indicador de FPS da interface, que podia mostrar 60 em uma transmissão configurada para 30 por causa da forma como alguns fluxos H.264 do Media Foundation são divididos em access units.
-- Mantém 1080p e os fallbacks NVENC / Media Foundation da v0.3.3.
+## Novidades
 
-> Observação: nesta versão o cursor do Windows não aparece para os espectadores quando o caminho de compatibilidade GDI é usado. Isso elimina o flicker local. Uma sobreposição de cursor independente pode ser adicionada depois sem mover/piscar o cursor real do usuário.
+- Perfis: Jogo, Filme, Leve e Personalizado.
+- Qualidades: 720p30, 720p60, 1080p30 e 1080p60.
+- Fonte: tela inteira ou janela/jogo específico.
+- Cursor separado do vídeo: Automático, Mostrar ou Ocultar. No perfil Jogo, Automático oculta o cursor.
+- Áudio por aplicativo usando WASAPI process loopback.
+  - Janela: captura somente o áudio do aplicativo selecionado.
+  - Tela: pode capturar todo o sistema excluindo a árvore de processos do Discord.
+  - Isso evita retransmitir para os espectadores as vozes da call do Discord.
+- Indicador de latência do relay.
+- Preserva configurações entre execuções.
+- Atalho global Ctrl + Shift + S para iniciar/encerrar.
+- Minimização automática para a bandeja.
+- Encoder por hardware continua priorizado.
+
+## Build
+
+O workflow `.github/workflows/build-windows.yml` usa .NET 9 e gera um executável self-contained para Windows x64.
+
+## Observação
+
+O áudio por processo usa APIs modernas do Windows. A versão é destinada a Windows 10/11 recentes; Windows 11 é o alvo recomendado.
