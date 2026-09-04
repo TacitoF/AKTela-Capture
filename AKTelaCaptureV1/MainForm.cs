@@ -18,7 +18,12 @@ internal sealed class MainForm : Form
     private readonly Button _paste = new();
     private readonly Label _status = new();
     private readonly Label _detail = new();
+    private readonly Label _outputValue = new();
+    private readonly Label _fpsValue = new();
+    private readonly Label _encoderValue = new();
+    private readonly Label _viewerValue = new();
     private readonly NotifyIcon _tray = new();
+    private readonly ToolStripMenuItem _trayStatusItem = new();
 
     private readonly SemaphoreSlim _mediaGate = new(1, 1);
 
@@ -49,7 +54,7 @@ internal sealed class MainForm : Form
         base.Text = "AKTela Capture";
         BackColor = Bg;
         ForeColor = TextColor;
-        ClientSize = new Size(430, 570);
+        ClientSize = new Size(430, 670);
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
@@ -113,12 +118,14 @@ internal sealed class MainForm : Form
         _code.MaxLength = 6;
         _code.Font = new Font("Consolas", 11f, FontStyle.Bold);
         StyleText(_code);
+        Controls.Add(_code);
 
         _paste.Text = "Colar";
         _paste.Bounds = new Rectangle(324, 174, 86, 38);
         StyleButton(_paste, Surface2);
         _paste.Click += (_, _) =>
         {
+            if (_sharing) return;
             try
             {
                 _code.Text = RelayClient.Normalize(Clipboard.GetText());
@@ -158,17 +165,65 @@ internal sealed class MainForm : Form
         StyleCombo(_source);
         Controls.Add(_source);
 
-        _audioCheck.Text = "Compartilhar áudio";
+        var audioPanel = new Panel
+        {
+            Bounds = new Rectangle(20, 458, 390, 48),
+            BackColor = Surface
+        };
+        audioPanel.Controls.Add(new Label
+        {
+            Text = "Áudio da transmissão",
+            AutoSize = true,
+            ForeColor = TextColor,
+            Font = new Font("Segoe UI Variable Text", 8.8f, FontStyle.Bold),
+            Location = new Point(12, 7)
+        });
+        audioPanel.Controls.Add(new Label
+        {
+            Text = "Evita retorno do áudio do Discord quando possível",
+            AutoSize = true,
+            ForeColor = Muted,
+            Font = new Font("Segoe UI Variable Text", 7.2f),
+            Location = new Point(12, 27)
+        });
+        Controls.Add(audioPanel);
+
+        _audioCheck.Text = "Ligado";
         _audioCheck.Checked = true;
-        _audioCheck.ForeColor = TextColor;
-        _audioCheck.BackColor = Bg;
-        _audioCheck.Font = new Font("Segoe UI Variable Text", 9f);
-        _audioCheck.AutoSize = true;
-        _audioCheck.Location = new Point(20, 466);
-        Controls.Add(_audioCheck);
+        _audioCheck.Appearance = Appearance.Button;
+        _audioCheck.TextAlign = ContentAlignment.MiddleCenter;
+        _audioCheck.Bounds = new Rectangle(300, 9, 76, 30);
+        _audioCheck.FlatStyle = FlatStyle.Flat;
+        _audioCheck.FlatAppearance.BorderSize = 0;
+        _audioCheck.ForeColor = Color.White;
+        _audioCheck.BackColor = Accent;
+        _audioCheck.Font = new Font("Segoe UI Variable Text", 8f, FontStyle.Bold);
+        _audioCheck.Cursor = Cursors.Hand;
+        _audioCheck.CheckedChanged += (_, _) =>
+        {
+            if (_sharing) return;
+            _audioCheck.Text = _audioCheck.Checked ? "Ligado" : "Desligado";
+            _audioCheck.BackColor = _audioCheck.Checked ? Accent : Surface2;
+        };
+        audioPanel.Controls.Add(_audioCheck);
+
+        var stats = new Panel
+        {
+            Bounds = new Rectangle(20, 518, 390, 62),
+            BackColor = Surface
+        };
+        AddStat(stats, "Saída", _outputValue, 10);
+        AddStat(stats, "Captura", _fpsValue, 106);
+        AddStat(stats, "Encoder", _encoderValue, 202);
+        AddStat(stats, "Assistindo", _viewerValue, 298);
+        _outputValue.Text = "—";
+        _fpsValue.Text = "—";
+        _encoderValue.Text = "—";
+        _viewerValue.Text = "0";
+        Controls.Add(stats);
 
         _start.Text = "Iniciar transmissão";
-        _start.Bounds = new Rectangle(20, 508, 390, 44);
+        _start.Bounds = new Rectangle(20, 598, 390, 50);
         StyleButton(_start, Accent);
         _start.Font = new Font("Segoe UI Variable Text", 10f, FontStyle.Bold);
         Controls.Add(_start);
@@ -227,6 +282,7 @@ internal sealed class MainForm : Form
 
         _relay.ViewerCountChanged += count => Ui(() =>
         {
+            _viewerValue.Text = Math.Max(0, count).ToString();
             RefreshStatus();
             _ = SyncMedia(count);
         });
@@ -244,14 +300,15 @@ internal sealed class MainForm : Form
 
         _video.FpsChanged += fps => Ui(() =>
         {
+            _fpsValue.Text = fps > 0 ? $"{fps:0} FPS" : "—";
             if (_sharing && fps > 0)
-                _detail.Text = $"{fps:0} FPS · {_relay.LatencyMs} ms";
+                RefreshStatus();
         });
 
         _video.EncoderChanged += name => Ui(() =>
         {
-            if (_sharing)
-                _detail.Text = name;
+            _encoderValue.Text = ShortEncoder(name);
+            if (_sharing) RefreshStatus();
         });
 
         _video.StreamError += msg => Ui(() =>
@@ -324,6 +381,8 @@ internal sealed class MainForm : Form
             _activeSource = source;
             _activeConfig = cfg;
             _activeAudio = audioMode;
+            _outputValue.Text = quality.Height >= 1080 ? "1080p" : "720p";
+            _viewerValue.Text = Math.Max(0, _relay.ViewerCount).ToString();
 
             Lock(true);
 
@@ -413,6 +472,10 @@ internal sealed class MainForm : Form
 
         _activeSource = null;
         _activeConfig = null;
+        _outputValue.Text = "—";
+        _fpsValue.Text = "—";
+        _encoderValue.Text = "—";
+        _viewerValue.Text = "0";
 
         Lock(false);
 
@@ -442,10 +505,15 @@ internal sealed class MainForm : Form
             return;
         }
 
+        var details = new List<string>();
+        if (_activeConfig is not null) details.Add($"{_activeConfig.Height}p · {_activeConfig.Fps} FPS");
+        if (_encoderValue.Text is not "—" and not "") details.Add(_encoderValue.Text);
+        if (_relay.LatencyMs > 0) details.Add($"{_relay.LatencyMs} ms");
+
         SetStatus(
             $"Ao vivo · {_relay.ViewerCount} assistindo",
-            Green,
-            $"{_activeConfig?.Height}p · {_activeConfig?.Fps} FPS · {_relay.LatencyMs} ms");
+            _relay.LatencyMs > 450 ? Yellow : Green,
+            details.Count > 0 ? string.Join(" · ", details) : "Transmissão ativa");
     }
 
     private void SetStatus(string text, Color color, string detail)
@@ -461,7 +529,7 @@ internal sealed class MainForm : Form
     {
         _code.ReadOnly = locked;
         _code.TabStop = !locked;
-        _paste.Enabled = !locked;
+        _paste.Enabled = true;
 
         _quality.Enabled = !locked;
         _sourceType.Enabled = !locked;
@@ -482,9 +550,13 @@ internal sealed class MainForm : Form
             if (e.Button == MouseButtons.Left)
                 Restore();
         };
+        _tray.DoubleClick += (_, _) => Restore();
 
         var menu = new ContextMenuStrip();
-
+        _trayStatusItem.Enabled = false;
+        _trayStatusItem.Text = "Pronto";
+        menu.Items.Add(_trayStatusItem);
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Abrir AKTela Capture", null, (_, _) => Restore());
         menu.Items.Add("Iniciar/encerrar", null, async (_, _) => await Toggle());
         menu.Items.Add(new ToolStripSeparator());
@@ -503,6 +575,12 @@ internal sealed class MainForm : Form
 
     private void UpdateTray()
     {
+        var status = _sharing
+            ? (_relay.ViewerCount > 0
+                ? $"Ao vivo · {_relay.ViewerCount} assistindo"
+                : "Ligado · aguardando espectador")
+            : "Pronto";
+        _trayStatusItem.Text = status;
         _tray.Text = _sharing
             ? (_relay.ViewerCount > 0
                 ? $"AKTela · ao vivo · {_relay.ViewerCount} assistindo"
@@ -538,6 +616,34 @@ internal sealed class MainForm : Form
             _tray.Visible = false;
             _mediaGate.Dispose();
         }
+    }
+
+    private static void AddStat(Control parent, string title, Label value, int x)
+    {
+        parent.Controls.Add(new Label
+        {
+            Text = title,
+            AutoSize = true,
+            ForeColor = Muted,
+            Font = new Font("Segoe UI Variable Text", 7f),
+            Location = new Point(x, 9)
+        });
+        value.AutoSize = true;
+        value.ForeColor = TextColor;
+        value.Font = new Font("Segoe UI Variable Text", 8.5f, FontStyle.Bold);
+        value.Location = new Point(x, 31);
+        parent.Controls.Add(value);
+    }
+
+    private static string ShortEncoder(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "—";
+        return value
+            .Replace("NVENC · D3D11 compatível", "NVENC")
+            .Replace("NVENC · D3D11", "NVENC")
+            .Replace("Media Foundation · D3D11", "Media F.")
+            .Replace("NVENC · compatibilidade", "NVENC")
+            .Replace("Media Foundation · compatibilidade", "Media F.");
     }
 
     private void Label(string text, int x, int y)
