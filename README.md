@@ -1,25 +1,13 @@
-# AKTela Capture v0.3.2
+# AKTela Capture v0.3.3
 
-Capture nativo para Windows focado em 1080p com baixo impacto.
+Correção do pipeline de vídeo.
 
-## Destaques
-- 1920×1080.
-- Seletor de 30 ou 60 FPS.
-- Captura via Desktop Duplication/D3D11 do FFmpeg (`ddagrab`).
-- Escala em D3D11 e H.264 por hardware; tenta NVIDIA NVENC e usa Media Foundation como fallback.
-- Perfil de baixa latência: CBR, buffer VBV próximo de 1 quadro, sem B-frames/lookahead.
-- Áudio do sistema 48 kHz estéreo em Opus 128 kbps.
-- Sem espectadores: captura/encoder são desligados automaticamente.
-- O FFmpeg é baixado uma única vez para `%LOCALAPPDATA%\AKTelaCapture\tools` quando a primeira transmissão realmente começa.
+## O que mudou
 
-## Build
-O workflow `.github/workflows/build-windows.yml` continua gerando `AKTelaCapture.exe` no GitHub Actions.
+- Em telas 1920×1080, tenta primeiro `ddagrab -> h264_nvenc` diretamente, sem `scale_d3d11`.
+- Se o caminho DXGI/D3D11 falhar, usa um fallback de captura diferente (`gdigrab`) em vez de repetir o mesmo pipeline quebrado.
+- Tenta NVENC no fallback e, por último, Media Foundation.
+- Mensagens de erro agora preservam mais linhas do FFmpeg para diagnóstico.
+- Mantém 1080p, 30/60 FPS, CBR e parâmetros de baixa latência.
 
-
-## Atualização v0.3.2.2
-Se estiver atualizando a partir da v0.2.x, este pacote sobrescreve o antigo `CaptureController.cs`, que não é mais usado.
-
-
-## v0.3.2
-- Corrige o fallback Media Foundation removendo `-profile:v high` e `-level:v 4.2`, que não são aceitos dessa forma por `h264_mf` em builds atuais do FFmpeg.
-- Se NVENC e Media Foundation falharem, agora o erro mostra os dois motivos separadamente.
+O fallback GDI é apenas de compatibilidade e pode consumir um pouco mais CPU que o caminho DXGI principal.
