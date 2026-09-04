@@ -1,0 +1,35 @@
+name: Gerar AKTela Capture.exe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'AKTelaCapture/**'
+      - '.github/workflows/build-windows.yml'
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v4
+
+      - name: Instalar .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restaurar dependências
+        run: dotnet restore AKTelaCapture/AKTelaCapture.csproj
+
+      - name: Gerar executável Windows x64
+        run: dotnet publish AKTelaCapture/AKTelaCapture.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish
+
+      - name: Publicar artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: AKTela-Capture-Windows-x64
+          path: publish/
+          if-no-files-found: error
