@@ -5,6 +5,8 @@ namespace AKTelaCapture;
 internal sealed class AppSettings
 {
     public string RoomCode { get; set; } = string.Empty;
+    public int Fps { get; set; } = 30;
+    public bool IncludeSystemAudio { get; set; } = true;
 
     private static string SettingsDirectory => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
