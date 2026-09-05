@@ -47,6 +47,6 @@ jobs:
       - name: Publicar artefato
         uses: actions/upload-artifact@v6
         with:
-          name: AKTela-Capture-Stability-v2-Windows-x64
+          name: AKTela-Capture-Stability-v2.1-Windows-x64
           path: publish/AKTela Capture.exe
           if-no-files-found: error
