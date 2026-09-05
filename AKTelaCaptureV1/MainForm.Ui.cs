@@ -195,7 +195,7 @@ internal sealed partial class MainForm
             _audioCheck.ForeColor = _audioCheck.Checked ? Bg : TextColor;
         };
         audio.Controls.Add(_audioCheck);
-        audio.Controls.Add(Copy("O áudio do Discord é excluído quando possível para evitar eco.", 9, Muted));
+        audio.Controls.Add(Copy("Evita eco do Discord quando possível.", 9, Muted));
         overview.Controls.Add(audio);
 
         var footer = Stack();
