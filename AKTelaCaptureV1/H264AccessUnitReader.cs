@@ -64,7 +64,7 @@ internal sealed class H264AccessUnitReader
     {
         for (var i = 0; i + 7 < data.Length; i++)
         {
-            var sc = StartCode(data, i);
+            var sc = StartCodeSpan(data, i);
             if (sc == 0) continue;
             var nal = i + sc;
             if (nal + 3 >= data.Length || (data[nal] & 0x1f) != 7) continue;
@@ -110,7 +110,7 @@ internal sealed class H264AccessUnitReader
         var starts = new List<(int Start, int Type)>();
         for (var i = 0; i + 3 < data.Length; i++)
         {
-            var sc = StartCode(data, i);
+            var sc = StartCodeSpan(data, i);
             if (sc == 0) continue;
             var header = i + sc;
             if (header < data.Length) starts.Add((i, data[header] & 0x1f));
@@ -131,20 +131,20 @@ internal sealed class H264AccessUnitReader
     {
         for (var i = Math.Max(0, start); i + 4 < data.Count; i++)
         {
-            var sc = StartCode(data, i);
+            var sc = StartCodeList(data, i);
             if (sc > 0 && i + sc < data.Count && (data[i + sc] & 0x1f) == 9) return i;
         }
         return -1;
     }
 
-    private static int StartCode(IReadOnlyList<byte> data, int i)
+    private static int StartCodeList(IReadOnlyList<byte> data, int i)
     {
         if (i + 2 < data.Count && data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1) return 3;
         if (i + 3 < data.Count && data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 0 && data[i + 3] == 1) return 4;
         return 0;
     }
 
-    private static int StartCode(ReadOnlySpan<byte> data, int i)
+    private static int StartCodeSpan(ReadOnlySpan<byte> data, int i)
     {
         if (i + 2 < data.Length && data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1) return 3;
         if (i + 3 < data.Length && data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 0 && data[i + 3] == 1) return 4;

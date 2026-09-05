@@ -21,11 +21,11 @@ internal sealed class IvfFrameReader
             _headerRead = true;
         }
 
+        var header = new byte[12];
         while (_buffer.Count >= 12)
         {
-            Span<byte> header = stackalloc byte[12];
             for (var i = 0; i < 12; i++) header[i] = _buffer[i];
-            var size = BinaryPrimitives.ReadUInt32LittleEndian(header[..4]);
+            var size = BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(0, 4));
             if (size > 8 * 1024 * 1024) throw new InvalidDataException("Frame VP8 inválido.");
             if (_buffer.Count < 12 + size) break;
 

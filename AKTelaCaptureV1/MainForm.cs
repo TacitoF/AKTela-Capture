@@ -105,7 +105,7 @@ internal sealed class MainForm : Form
 
         Controls.Add(new PictureBox
         {
-            Image = Icon.ToBitmap(),
+            Image = AppIcon.Load().ToBitmap(),
             SizeMode = PictureBoxSizeMode.StretchImage,
             Bounds = new Rectangle(20, 20, 32, 32)
         });

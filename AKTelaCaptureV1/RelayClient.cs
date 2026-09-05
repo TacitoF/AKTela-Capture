@@ -299,29 +299,41 @@ internal sealed class RelayClient : IAsyncDisposable
 
         while (!token.IsCancellationRequested && ws.State == WebSocketState.Open)
         {
-            while (control.Reader.TryRead(out var controlData))
-                await ws.SendAsync(controlData, WebSocketMessageType.Text, true, token);
+            var sentSomething = false;
 
-            if (audio.Reader.TryRead(out var audioData))
+            // Controle continua prioritário, mas com limite por ciclo para cursor/pings
+            // não impedirem que os quadros de vídeo avancem.
+            for (var i = 0; i < 8 && control.Reader.TryRead(out var controlData); i++)
             {
-                await ws.SendAsync(audioData, WebSocketMessageType.Binary, true, token);
-                Interlocked.Increment(ref _audioSent);
-                continue;
+                await ws.SendAsync(controlData, WebSocketMessageType.Text, true, token);
+                sentSomething = true;
             }
 
+            // Vídeo primeiro: em compartilhamento de tela, um quadro atual é mais útil
+            // do que deixar a fila acumular atraso.
             if (video.Reader.TryRead(out var videoData))
             {
                 await ws.SendAsync(videoData, WebSocketMessageType.Binary, true, token);
                 Interlocked.Increment(ref _videoSent);
                 if ((Interlocked.Read(ref _videoSent) & 31) == 0) PublishDiagnostics();
-                continue;
+                sentSomething = true;
             }
+
+            // Ainda enviamos um pacote de áudio por ciclo para evitar starvation.
+            if (audio.Reader.TryRead(out var audioData))
+            {
+                await ws.SendAsync(audioData, WebSocketMessageType.Binary, true, token);
+                Interlocked.Increment(ref _audioSent);
+                sentSomething = true;
+            }
+
+            if (sentSomething) continue;
 
             var waits = new[]
             {
                 control.Reader.WaitToReadAsync(token).AsTask(),
-                audio.Reader.WaitToReadAsync(token).AsTask(),
-                video.Reader.WaitToReadAsync(token).AsTask()
+                video.Reader.WaitToReadAsync(token).AsTask(),
+                audio.Reader.WaitToReadAsync(token).AsTask()
             };
             await Task.WhenAny(waits);
         }

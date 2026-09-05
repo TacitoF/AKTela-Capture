@@ -1,5 +1,5 @@
+using Concentus;
 using Concentus.Enums;
-using Concentus.Structs;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
 
@@ -49,7 +49,11 @@ internal sealed class AudioStreamer : IAsyncDisposable
     private async Task EncodeLoop(CancellationToken token)
     {
         if (_buffer is null) return;
-        var encoder = new OpusEncoder(Rate, Channels, OpusApplication.OPUS_APPLICATION_RESTRICTED_LOWDELAY) { Bitrate = 128_000, Complexity = 3, UseVBR = true, SignalType = OpusSignal.OPUS_SIGNAL_MUSIC };
+        using var encoder = OpusCodecFactory.CreateEncoder(Rate, Channels, OpusApplication.OPUS_APPLICATION_RESTRICTED_LOWDELAY);
+        encoder.Bitrate = 128_000;
+        encoder.Complexity = 3;
+        encoder.UseVBR = true;
+        encoder.SignalType = OpusSignal.OPUS_SIGNAL_MUSIC;
         var pcmBytes = new byte[FrameBytes]; var pcm = new short[FrameSamples * Channels]; var encoded = new byte[4000];
         try
         {
@@ -58,7 +62,7 @@ internal sealed class AudioStreamer : IAsyncDisposable
                 if (_buffer.BufferedBytes < FrameBytes) { await Task.Delay(3, token); continue; }
                 var read = _buffer.Read(pcmBytes.AsSpan(0, FrameBytes)); if (read < FrameBytes) continue;
                 Buffer.BlockCopy(pcmBytes, 0, pcm, 0, FrameBytes);
-                var count = encoder.Encode(pcm, 0, FrameSamples, encoded, 0, encoded.Length); if (count <= 0) continue;
+                var count = encoder.Encode(pcm.AsSpan(), FrameSamples, encoded.AsSpan(), encoded.Length); if (count <= 0) continue;
                 PacketReady?.Invoke(PacketProtocol.Create(MediaKind.Audio, true, MediaClock.NowMicroseconds(), 20_000, encoded.AsSpan(0, count)));
             }
         }
