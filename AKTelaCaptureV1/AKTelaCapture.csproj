@@ -8,9 +8,9 @@
     <AssemblyName>AKTela Capture</AssemblyName>
     <RootNamespace>AKTelaCapture</RootNamespace>
     <Product>AKTela Capture</Product>
-    <Version>2.2.1</Version>
-    <AssemblyVersion>2.2.1.0</AssemblyVersion>
-    <FileVersion>2.2.1.0</FileVersion>
+    <Version>2.3.0</Version>
+    <AssemblyVersion>2.3.0.0</AssemblyVersion>
+    <FileVersion>2.3.0.0</FileVersion>
     <ApplicationIcon>Assets\AKTela.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
@@ -32,6 +32,8 @@
     <Compile Include="H264AccessUnitReader.cs" />
     <Compile Include="IvfFrameReader.cs" />
     <Compile Include="MainForm.cs" />
+    <Compile Include="MainForm.Ui.cs" />
+    <Compile Include="VideoPacketQueue.cs" />
     <Compile Include="Models.cs" />
     <Compile Include="PacketProtocol.cs" />
     <Compile Include="ProcessTreeHelper.cs" />

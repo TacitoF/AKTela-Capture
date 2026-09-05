@@ -37,7 +37,8 @@ internal sealed class VideoStreamer : IAsyncDisposable
             _source = source;
             _config = config;
             _cts = new CancellationTokenSource();
-            _task = Task.Run(() => RunAsync(source, config, _cts.Token));
+            var token = _cts.Token;
+            _task = Task.Run(() => RunAsync(source, config, token));
         }
         finally
         {

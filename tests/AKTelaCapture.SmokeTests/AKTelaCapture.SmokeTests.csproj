@@ -8,6 +8,7 @@
   </PropertyGroup>
   <!-- Compile os mesmos arquivos usados pelo aplicativo, sem duplicar sua lógica. -->
   <ItemGroup>
+    <Compile Include="../../AKTelaCaptureV1/VideoPacketQueue.cs" Link="Production/VideoPacketQueue.cs" />
     <Compile Include="../../AKTelaCaptureV1/VideoStreamer.cs" Link="Production/VideoStreamer.cs" />
     <Compile Include="../../AKTelaCaptureV1/Models.cs" Link="Production/Models.cs" />
     <Compile Include="../../AKTelaCaptureV1/FfmpegManager.cs" Link="Production/FfmpegManager.cs" />

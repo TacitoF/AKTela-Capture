@@ -1,6 +1,13 @@
-# AKTela Capture — Stability v2.2.1
+# AKTela Capture 2.3.0
 
-Correções de inicialização e continuidade da captura H.264.
+Interface redesenhada e correções de estabilidade para transmissão em tempo real.
+
+- Novo layout responsivo, com fluxo de configuração mais claro, estados legíveis e diagnóstico na tela principal.
+- A fila de vídeo agora preserva a dependência entre quadros: após congestionamento, aguarda um novo quadro-chave em vez de enviar deltas inválidos.
+- O áudio passa a iniciar corretamente depois da negociação de compatibilidade.
+- O cursor remoto desaparece quando fica inativo, acompanhando o comportamento de players em tela cheia.
+- Medição de latência a cada 6 segundos e redução de qualidade mais rápida em rede congestionada.
+- Proteções contra concorrência ao iniciar, encerrar, reconectar e fechar o aplicativo.
 
 - Remove `scale_d3d11` do caminho padrão por instabilidade em alguns drivers.
 - Desktop Duplication continua sendo usado para captura; NVENC continua sendo o encoder preferencial.
@@ -12,13 +19,13 @@ Correções de inicialização e continuidade da captura H.264.
 
 ## Atualizar
 
-Substitua os arquivos deste repositório e gere um novo executável pelo workflow **Gerar AKTela Capture Stability.exe**, em **Actions**, ou execute no Windows:
+Baixe a versão publicada em **Releases**, execute-a no Windows x64 e cole o código de seis caracteres exibido pela Activity. Para compilar localmente:
 
 ```powershell
 dotnet publish AKTelaCaptureV1/AKTelaCapture.csproj -c Release -r win-x64 --self-contained true -o publish
 ```
 
-Feche o Capture antigo e abra o executável 2.2.1. Esta correção não exige atualizar AKTela Activity ou AKTela Relay.
+As correções de sincronização de espectadores dependem também das versões atuais de AKTela Activity e AKTela Relay.
 
 ## Verificação no Windows
 

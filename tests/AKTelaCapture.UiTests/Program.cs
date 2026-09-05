@@ -1,0 +1,51 @@
+using System.Reflection;
+using System.Drawing.Imaging;
+
+internal static class Program
+{
+    [STAThread]
+    private static void Main()
+    {
+        ApplicationConfiguration.Initialize();
+        var type = Assembly.Load("AKTela Capture").GetType("AKTelaCapture.MainForm", true)!;
+        using var form = (Form)Activator.CreateInstance(type)!;
+        form.Show();
+        Application.DoEvents();
+        Directory.CreateDirectory("ui-captures");
+        Capture(form, "desktop");
+        var start = Field<Button>(form, "_start");
+        var code = Field<TextBox>(form, "_code");
+        code.Text = "BAD";
+        start.PerformClick();
+        Application.DoEvents();
+        Check(Field<Label>(form, "_status").Text == "Confira o código", "Código inválido deve ser rejeitado antes de acessar a rede");
+        Invoke(form, "ApplyPreset", "Jogo");
+        Check(Field<ComboBox>(form, "_quality").Text.Contains("60 FPS"), "Preset Jogo deve selecionar 60 FPS");
+        Invoke(form, "ApplyPreset", "Leve");
+        Invoke(form, "Lock", true);
+        Check(!Field<Button>(form, "_paste").Enabled && !Field<Button>(form, "_refreshSources").Enabled,
+            "Configuração bloqueada deve desabilitar Colar e Atualizar");
+        Invoke(form, "Lock", false);
+        form.ClientSize = new Size(800, 600);
+        Application.DoEvents();
+        Capture(form, "compact");
+        type.GetField("_allowClose", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(form, true);
+        form.Close();
+        Console.WriteLine("PASS UI: código inválido, presets, bloqueio e layouts desktop/compacto.");
+    }
+
+    private static void Capture(Form form, string name)
+    {
+        Application.DoEvents();
+        var start = Field<Button>(form, "_start");
+        var bounds = form.RectangleToClient(start.RectangleToScreen(start.ClientRectangle));
+        Check(form.ClientRectangle.Contains(bounds), "Botão principal fora da área visível: " + name);
+        using var image = new Bitmap(form.Width, form.Height);
+        form.DrawToBitmap(image, new Rectangle(Point.Empty, form.Size));
+        image.Save(Path.Combine("ui-captures", name + ".png"), ImageFormat.Png);
+    }
+
+    private static T Field<T>(Form form, string name) => (T)form.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+    private static void Invoke(Form form, string name, params object[] args) => form.GetType().GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, args);
+    private static void Check(bool valid, string message) { if (!valid) throw new Exception(message); }
+}
