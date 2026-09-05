@@ -156,8 +156,10 @@ internal sealed partial class MainForm
         state.Controls.Add(stateLine);
         _detail.Text = "Conecte uma sala para iniciar.";
         _detail.ForeColor = Muted;
-        _detail.AutoSize = true;
+        _detail.AutoSize = false;
         _detail.Dock = DockStyle.Top;
+        _detail.Height = 42;
+        _detail.AutoEllipsis = true;
         _detail.Font = new Font("Segoe UI", 10);
         _detail.Margin = new Padding(0, 0, 0, 14);
         state.Controls.Add(_detail);
@@ -193,7 +195,7 @@ internal sealed partial class MainForm
             _audioCheck.ForeColor = _audioCheck.Checked ? Bg : TextColor;
         };
         audio.Controls.Add(_audioCheck);
-        audio.Controls.Add(Copy("Ao capturar a tela, o áudio do Discord é excluído quando disponível.", 9, Muted));
+        audio.Controls.Add(Copy("O áudio do Discord é excluído quando possível para evitar eco.", 9, Muted));
         overview.Controls.Add(audio);
 
         var footer = Stack();

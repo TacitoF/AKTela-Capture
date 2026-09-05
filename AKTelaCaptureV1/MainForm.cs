@@ -290,7 +290,7 @@ internal sealed partial class MainForm : Form
             var code = RelayClient.Normalize(_code.Text);
             if (!RelayClient.IsValidCode(code))
             {
-                SetStatus("Confira o código", Yellow, "Digite os 6 caracteres exibidos na Activity do Discord.");
+                SetStatus("Confira o código", Yellow, "Digite os 6 caracteres da Activity.");
                 _code.Focus();
                 return;
             }

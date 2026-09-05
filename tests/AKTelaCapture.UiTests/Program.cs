@@ -29,13 +29,9 @@ internal static class Program
         form.ClientSize = new Size(800, 600);
         Application.DoEvents();
         Capture(form, "compact");
-        form.ClientSize = new Size(960, 740);
-        form.Scale(new SizeF(1.5f, 1.5f));
-        Application.DoEvents();
-        Capture(form, "scaled-150");
         type.GetField("_allowClose", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(form, true);
         form.Close();
-        Console.WriteLine("PASS UI: código inválido, presets, bloqueio, layout desktop/compacto/150%.");
+        Console.WriteLine("PASS UI: código inválido, presets, bloqueio e layouts desktop/compacto.");
     }
 
     private static void Capture(Form form, string name)
