@@ -24,6 +24,7 @@ internal sealed class MainForm : Form
     private readonly Label _viewerValue = new();
     private readonly NotifyIcon _tray = new();
     private readonly ToolStripMenuItem _trayStatusItem = new();
+    private readonly System.Windows.Forms.Timer _adaptiveTimer = new() { Interval = 5000 };
 
     private readonly SemaphoreSlim _mediaGate = new(1, 1);
 
@@ -38,11 +39,17 @@ internal sealed class MainForm : Form
     private bool _sharing;
     private bool _relayConnected;
     private bool _allowClose;
+    private bool _publisherBlocked;
 
     private CaptureSource? _activeSource;
     private StreamConfig? _activeConfig;
     private AudioMode _activeAudio;
     private string _preset = "Leve";
+    private AudienceCapabilities _audience = AudienceCapabilities.Default();
+    private string _networkCapKey = "1080p60";
+    private long _lastDropSnapshot;
+    private int _stableTicks;
+    private long _lastKeyframeRestartAt;
 
     private static readonly Color Bg = Color.FromArgb(10, 14, 22);
     private static readonly Color Surface = Color.FromArgb(16, 23, 35);
@@ -72,38 +79,36 @@ internal sealed class MainForm : Form
         Wire();
         LoadSources();
 
+        _adaptiveTimer.Tick += async (_, _) => await EvaluateAdaptiveQuality();
         FormClosing += OnClosing;
     }
 
     private void BuildUi()
     {
-        var title = new Label
+        Controls.Add(new Label
         {
             Text = "AKTela Capture",
             Font = new Font("Segoe UI Variable Display", 15, FontStyle.Bold),
             ForeColor = TextColor,
             AutoSize = true,
             Location = new Point(62, 22)
-        };
-        Controls.Add(title);
+        });
 
-        var sub = new Label
+        Controls.Add(new Label
         {
             Text = "Compartilhamento leve e direto",
             Font = new Font("Segoe UI Variable Text", 8.5f),
             ForeColor = Muted,
             AutoSize = true,
             Location = new Point(63, 49)
-        };
-        Controls.Add(sub);
+        });
 
-        var pic = new PictureBox
+        Controls.Add(new PictureBox
         {
             Image = Icon.ToBitmap(),
             SizeMode = PictureBoxSizeMode.StretchImage,
             Bounds = new Rectangle(20, 20, 32, 32)
-        };
-        Controls.Add(pic);
+        });
 
         _status.Text = "Pronto";
         _status.Font = new Font("Segoe UI Variable Text", 9.5f, FontStyle.Bold);
@@ -116,6 +121,7 @@ internal sealed class MainForm : Form
         _detail.Font = new Font("Segoe UI Variable Text", 8f);
         _detail.ForeColor = Muted;
         _detail.AutoSize = true;
+        _detail.MaximumSize = new Size(390, 34);
         _detail.Location = new Point(20, 115);
         Controls.Add(_detail);
 
@@ -134,30 +140,21 @@ internal sealed class MainForm : Form
         _paste.Click += (_, _) =>
         {
             if (_sharing) return;
-            try
-            {
-                _code.Text = RelayClient.Normalize(Clipboard.GetText());
-            }
-            catch
-            {
-            }
+            try { _code.Text = RelayClient.Normalize(Clipboard.GetText()); } catch { }
         };
         Controls.Add(_paste);
 
         Label("Modo", 20, 231);
-
-        var game = PresetButton("Jogo", 20, 253, "Jogo");
-        var movie = PresetButton("Filme", 151, 253, "Filme");
-        var light = PresetButton("Leve", 282, 253, "Leve");
-        Controls.AddRange([game, movie, light]);
+        Controls.AddRange([
+            PresetButton("Jogo", 20, 253, "Jogo"),
+            PresetButton("Filme", 151, 253, "Filme"),
+            PresetButton("Leve", 282, 253, "Leve")
+        ]);
 
         Label("Qualidade", 20, 310);
         _quality.Bounds = new Rectangle(20, 331, 185, 36);
         StyleCombo(_quality);
-
-        foreach (var q in QualityOption.All)
-            _quality.Items.Add(q);
-
+        foreach (var q in QualityOption.All) _quality.Items.Add(q);
         _quality.SelectedItem = QualityOption.All[0];
         Controls.Add(_quality);
 
@@ -173,11 +170,7 @@ internal sealed class MainForm : Form
         StyleCombo(_source);
         Controls.Add(_source);
 
-        var audioPanel = new Panel
-        {
-            Bounds = new Rectangle(20, 458, 390, 48),
-            BackColor = Surface
-        };
+        var audioPanel = new Panel { Bounds = new Rectangle(20, 458, 390, 48), BackColor = Surface };
         audioPanel.Controls.Add(new Label
         {
             Text = "Áudio da transmissão",
@@ -215,11 +208,7 @@ internal sealed class MainForm : Form
         };
         audioPanel.Controls.Add(_audioCheck);
 
-        var stats = new Panel
-        {
-            Bounds = new Rectangle(20, 518, 390, 62),
-            BackColor = Surface
-        };
+        var stats = new Panel { Bounds = new Rectangle(20, 518, 390, 62), BackColor = Surface };
         AddStat(stats, "Saída", _outputValue, 10);
         AddStat(stats, "Captura", _fpsValue, 106);
         AddStat(stats, "Encoder", _encoderValue, 202);
@@ -249,21 +238,16 @@ internal sealed class MainForm : Form
 
     private Button PresetButton(string text, int x, int y, string preset)
     {
-        var b = new Button
-        {
-            Text = text,
-            Bounds = new Rectangle(x, y, 125, 38)
-        };
-        StyleButton(b, Surface2);
-        b.Font = new Font("Segoe UI Variable Text", 9f, FontStyle.Bold);
-        b.Click += (_, _) => { if (!_sharing) ApplyPreset(preset); };
-        return b;
+        var button = new Button { Text = text, Bounds = new Rectangle(x, y, 125, 38) };
+        StyleButton(button, Surface2);
+        button.Font = new Font("Segoe UI Variable Text", 9f, FontStyle.Bold);
+        button.Click += (_, _) => { if (!_sharing) ApplyPreset(preset); };
+        return button;
     }
 
     private void ApplyPreset(string preset)
     {
         _preset = preset;
-
         if (preset == "Jogo")
         {
             _sourceType.SelectedItem = "Janela";
@@ -279,7 +263,6 @@ internal sealed class MainForm : Form
             _sourceType.SelectedItem = "Tela";
             _quality.SelectedItem = QualityOption.All.First(q => q.Key == "720p30");
         }
-
         LoadSources();
     }
 
@@ -291,10 +274,7 @@ internal sealed class MainForm : Form
         _relay.ConnectionChanged += connected => Ui(() =>
         {
             _relayConnected = connected;
-
-            if (!connected && _sharing)
-                _ = SyncMedia(0);
-
+            if (!connected && _sharing) _ = SyncMedia(0);
             RefreshStatus();
         });
 
@@ -302,25 +282,41 @@ internal sealed class MainForm : Form
         {
             _viewerValue.Text = Math.Max(0, count).ToString();
             RefreshStatus();
-            _ = SyncMedia(count);
+            if (count <= 0) _ = SyncMedia(0);
+            else if (_audience.Ready) _ = SyncMedia(count);
         });
 
         _relay.LatencyChanged += _ => Ui(RefreshStatus);
 
-        _relay.Error += msg => Ui(() =>
+        _relay.AudienceCapabilitiesChanged += caps => Ui(() =>
         {
-            _detail.Text = msg;
-            _detail.ForeColor = Red;
+            _audience = caps;
+            RefreshStatus();
+            if (_sharing && caps.Viewers > 0 && caps.Ready) _ = NegotiateAndSync(caps.Viewers);
         });
 
-        _video.PacketReady += p => _relay.QueuePacket(p);
-        _audio.PacketReady += p => _relay.QueuePacket(p);
+        _relay.KeyframeRequested += () => Ui(() => _ = RestartForKeyframe());
+
+        _relay.PublisherRejected += message => Ui(() =>
+        {
+            _publisherBlocked = true;
+            SetStatus("Transmissão já em uso", Red, message);
+        });
+
+        _relay.Error += msg => Ui(() =>
+        {
+            if (_publisherBlocked) return;
+            _detail.Text = msg;
+            _detail.ForeColor = Yellow;
+        });
+
+        _video.PacketReady += packet => _relay.QueuePacket(packet);
+        _audio.PacketReady += packet => _relay.QueuePacket(packet);
 
         _video.FpsChanged += fps => Ui(() =>
         {
             _fpsValue.Text = fps > 0 ? $"{fps:0} FPS" : "—";
-            if (_sharing && fps > 0)
-                RefreshStatus();
+            if (_sharing && fps > 0) RefreshStatus();
         });
 
         _video.EncoderChanged += name => Ui(() =>
@@ -329,31 +325,51 @@ internal sealed class MainForm : Form
             if (_sharing) RefreshStatus();
         });
 
+        _video.CodecChanged += (codec, profile, codecString) =>
+        {
+            var current = _activeConfig;
+            if (current is null) return;
+
+            // Atualiza o relay imediatamente, antes de o primeiro quadro-chave sair do encoder.
+            // Assim o espectador nunca recebe um IDR seguido de uma configuração que invalida o decoder.
+            if (current.VideoCodec != codec || current.VideoProfile != profile || current.ExpectedCodec != codecString)
+            {
+                var updated = current with
+                {
+                    VideoCodec = codec,
+                    VideoProfile = profile,
+                    ExpectedCodec = codecString
+                };
+                _activeConfig = updated;
+                _relay.UpdateStreamConfig(updated);
+            }
+            Ui(RefreshStatus);
+        };
+
         _video.StreamError += msg => Ui(() =>
-            MessageBox.Show(this, msg, "Falha na captura", MessageBoxButtons.OK, MessageBoxIcon.Error));
+        {
+            SetStatus("Falha no encoder", Red, "Abra o diagnóstico para detalhes.");
+            MessageBox.Show(this, msg, "Falha na captura", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        });
 
         _audio.Error += msg => Ui(() =>
             MessageBox.Show(this, msg, "Falha no áudio", MessageBoxButtons.OK, MessageBoxIcon.Warning));
     }
 
+    private async Task NegotiateAndSync(int viewers)
+    {
+        await ApplyEffectiveConfig("recursos dos espectadores");
+        await SyncMedia(viewers);
+    }
+
     private void LoadSources()
     {
-        if (_sharing)
-            return;
-
+        if (_sharing) return;
         _source.Items.Clear();
-
         var type = _sourceType.SelectedItem?.ToString() ?? "Tela";
-        var sources = type == "Janela"
-            ? SourceEnumerator.Windows()
-            : SourceEnumerator.Displays();
-
-        foreach (var s in sources)
-            _source.Items.Add(s);
-
-        if (_source.Items.Count > 0)
-            _source.SelectedIndex = 0;
-
+        var sources = type == "Janela" ? SourceEnumerator.Windows() : SourceEnumerator.Displays();
+        foreach (var source in sources) _source.Items.Add(source);
+        if (_source.Items.Count > 0) _source.SelectedIndex = 0;
         _start.Enabled = _source.Items.Count > 0;
     }
 
@@ -365,6 +381,47 @@ internal sealed class MainForm : Form
         var width = Math.Max(2, ((int)Math.Round(sourceW * scale)) & ~1);
         var height = Math.Max(2, ((int)Math.Round(sourceH * scale)) & ~1);
         return (width, height);
+    }
+
+    private static string CodecStringFor(string qualityKey, string codec, string profile)
+    {
+        if (codec == "vp8") return "vp8";
+        var prefix = profile switch { "main" => "4D40", "high" => "6400", _ => "42E0" };
+        var level = qualityKey switch { "1080p60" => "2A", "1080p30" => "28", "720p60" => "20", _ => "1F" };
+        return $"avc1.{prefix}{level}";
+    }
+
+    private StreamConfig BuildEffectiveConfig(CaptureSource source, QualityOption requested)
+    {
+        var requestedKey = requested.Key;
+        var audienceKey = _audience.Viewers > 0 ? _audience.ModeKey : requestedKey;
+        var effectiveKey = QualityOption.Min(QualityOption.Min(requestedKey, audienceKey), _networkCapKey);
+
+        var codec = _audience.Viewers > 0 ? _audience.VideoCodec : "h264";
+        var profile = _audience.Viewers > 0 ? _audience.VideoProfile : "baseline";
+        if (codec == "vp8") effectiveKey = "720p30";
+        if (profile != "baseline" && profile != "main" && profile != "high") profile = "baseline";
+
+        var quality = QualityOption.ByKey(effectiveKey);
+        var output = FitOutput(source, quality);
+        var audioMode = _audioCheck.Checked
+            ? (source.Kind == SourceKind.Window ? AudioMode.SourceOnly : AudioMode.SystemWithoutDiscord)
+            : AudioMode.Off;
+
+        var compatibility = _audience.CompatibilityMode || effectiveKey != requestedKey || codec == "vp8" || !_audience.Ready;
+        return new StreamConfig(
+            effectiveKey,
+            output.Width,
+            output.Height,
+            quality.Fps,
+            quality.BitrateMbps,
+            audioMode != AudioMode.Off,
+            _preset,
+            _preset == "Jogo" ? "Ocultar" : "Mostrar",
+            codec,
+            profile,
+            CodecStringFor(effectiveKey, codec, profile),
+            compatibility);
     }
 
     private async Task Toggle()
@@ -379,63 +436,92 @@ internal sealed class MainForm : Form
                 return;
             }
 
-        if (_source.SelectedItem is not CaptureSource source ||
-            _quality.SelectedItem is not QualityOption quality)
-            return;
+            if (_source.SelectedItem is not CaptureSource source || _quality.SelectedItem is not QualityOption requested) return;
+            var code = RelayClient.Normalize(_code.Text);
+            _publisherBlocked = false;
+            _audience = AudienceCapabilities.Default();
+            _networkCapKey = requested.Key;
+            _stableTicks = 0;
+            _lastDropSnapshot = 0;
 
-        var code = RelayClient.Normalize(_code.Text);
+            var initial = BuildEffectiveConfig(source, requested);
+            _activeAudio = _audioCheck.Checked
+                ? (source.Kind == SourceKind.Window ? AudioMode.SourceOnly : AudioMode.SystemWithoutDiscord)
+                : AudioMode.Off;
 
-        var audioMode = _audioCheck.Checked
-            ? (source.Kind == SourceKind.Window
-                ? AudioMode.SourceOnly
-                : AudioMode.SystemWithoutDiscord)
-            : AudioMode.Off;
+            try
+            {
+                _start.Enabled = false;
+                SetStatus("Verificando relay", Yellow, "Teste 1/4");
+                await RelayClient.CheckHealthAsync();
 
-        var cursorPolicy = _preset == "Jogo" ? "Ocultar" : "Mostrar";
+                SetStatus("Preparando encoder", Yellow, "Teste 2/4 · FFmpeg");
+                if (!File.Exists(FfmpegManager.PathToExe))
+                {
+                    var progress = new Progress<int>(p => Ui(() => SetStatus($"Preparando encoder · {p}%", Yellow, "Primeira execução")));
+                    await FfmpegManager.EnsureAsync(progress);
+                }
 
-        var output = FitOutput(source, quality);
-        var cfg = new StreamConfig(
-            output.Width,
-            output.Height,
-            quality.Fps,
-            quality.BitrateMbps,
-            audioMode != AudioMode.Off,
-            _preset,
-            cursorPolicy);
+                SetStatus("Validando codec", Yellow, "Teste 3/4 · caminho de compatibilidade");
+                var probeConfig = initial with
+                {
+                    QualityKey = "720p30",
+                    Width = 1280,
+                    Height = 720,
+                    Fps = 30,
+                    BitrateMbps = 4,
+                    VideoCodec = "h264",
+                    VideoProfile = "baseline",
+                    ExpectedCodec = "avc1.42E01F",
+                    CompatibilityMode = true
+                };
+                string probeEncoder;
+                try
+                {
+                    probeEncoder = await _video.ProbeAsync(probeConfig);
+                }
+                catch
+                {
+                    probeConfig = probeConfig with { VideoCodec = "vp8", VideoProfile = "compatibility", ExpectedCodec = "vp8" };
+                    probeEncoder = await _video.ProbeAsync(probeConfig);
+                }
+                _encoderValue.Text = ShortEncoder(probeEncoder);
 
-        try
-        {
-            _start.Enabled = false;
-            SetStatus("Conectando ao relay", Yellow, "Validando Cloudflare");
+                SetStatus("Verificando áudio", Yellow, "Teste 4/4");
+                if (_activeAudio == AudioMode.SystemWithoutDiscord && ProcessTreeHelper.FindDiscordRootProcessId() is null)
+                    _detail.Text = "Discord não detectado para exclusão de áudio; o vídeo continuará normalmente.";
 
-            await _relay.StartAsync(code, cfg);
+                SetStatus("Conectando ao relay", Yellow, "Reservando esta Activity para um transmissor");
+                await _relay.StartAsync(code, initial);
 
-            _sharing = true;
-            _activeSource = source;
-            _activeConfig = cfg;
-            _activeAudio = audioMode;
-            _outputValue.Text = $"{cfg.Width}×{cfg.Height}";
-            _viewerValue.Text = Math.Max(0, _relay.ViewerCount).ToString();
+                _sharing = true;
+                _activeSource = source;
+                _activeConfig = initial;
+                _outputValue.Text = $"{initial.Width}×{initial.Height}";
+                _viewerValue.Text = Math.Max(0, _relay.ViewerCount).ToString();
+                Lock(true);
+                _start.Text = "Encerrar transmissão";
+                _start.BackColor = Red;
+                _adaptiveTimer.Start();
+                RefreshStatus();
 
-            Lock(true);
-
-            _start.Text = "Encerrar transmissão";
-            _start.BackColor = Red;
-
-            RefreshStatus();
-
-            if (_relay.ViewerCount > 0)
-                await SyncMedia(_relay.ViewerCount);
-        }
-        catch (Exception ex)
-        {
-            await _relay.StopAsync();
-            MessageBox.Show(this, ex.Message, "AKTela Capture", MessageBoxButtons.OK, MessageBoxIcon.Error);
-        }
-        finally
-        {
-            _start.Enabled = true;
-        }
+                if (_relay.ViewerCount > 0 && _audience.Ready)
+                    await NegotiateAndSync(_relay.ViewerCount);
+            }
+            catch (Exception ex)
+            {
+                await _relay.StopAsync();
+                _sharing = false;
+                _activeSource = null;
+                _activeConfig = null;
+                Lock(false);
+                SetStatus("Não foi possível iniciar", Red, ex.Message);
+                MessageBox.Show(this, ex.Message, "AKTela Capture", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                _start.Enabled = true;
+            }
         }
         finally
         {
@@ -443,15 +529,49 @@ internal sealed class MainForm : Form
         }
     }
 
+    private async Task ApplyEffectiveConfig(string reason)
+    {
+        if (!_sharing || _activeSource is null || _quality.SelectedItem is not QualityOption requested) return;
+        await _mediaGate.WaitAsync();
+        try
+        {
+            var next = BuildEffectiveConfig(_activeSource, requested);
+            var current = _activeConfig;
+            if (current is not null && SameVideoConfig(current, next))
+            {
+                _activeConfig = next;
+                RefreshStatus();
+                return;
+            }
+
+            _activeConfig = next;
+            _outputValue.Text = $"{next.Width}×{next.Height}";
+            _relay.UpdateStreamConfig(next);
+
+            if (_relay.ViewerCount > 0 && _relayConnected)
+            {
+                SetStatus(next.CompatibilityMode ? "Modo compatibilidade" : "Ajustando transmissão", Yellow, reason);
+                _cursor.Stop();
+                await _video.RestartAsync(_activeSource, next);
+                _cursor.Start(_activeSource, () => next.CursorPolicy == "Mostrar");
+            }
+            RefreshStatus();
+        }
+        finally
+        {
+            _mediaGate.Release();
+        }
+    }
+
+    private static bool SameVideoConfig(StreamConfig a, StreamConfig b) =>
+        a.Width == b.Width && a.Height == b.Height && a.Fps == b.Fps && a.VideoCodec == b.VideoCodec && a.VideoProfile == b.VideoProfile && a.BitrateMbps == b.BitrateMbps;
+
     private async Task SyncMedia(int viewers)
     {
         await _mediaGate.WaitAsync();
-
         try
         {
-            if (!_sharing)
-                return;
-
+            if (!_sharing) return;
             if (viewers <= 0 || !_relayConnected)
             {
                 _cursor.Stop();
@@ -460,38 +580,21 @@ internal sealed class MainForm : Form
                 return;
             }
 
-            if (_video.IsRunning)
-                return;
+            // Não inicia vídeo antes de todos os espectadores anunciarem os codecs suportados.
+            if (!_audience.Ready) return;
+            if (_video.IsRunning) return;
+            var source = _activeSource;
+            var config = _activeConfig;
+            if (source is null || config is null) return;
 
-            var src = _activeSource;
-            var cfg = _activeConfig;
-
-            if (src is null || cfg is null)
-                return;
-
-            if (!File.Exists(FfmpegManager.PathToExe))
-            {
-                var progress = new Progress<int>(p =>
-                    Ui(() => SetStatus($"Preparando encoder · {p}%", Yellow, "Primeira execução")));
-
-                await FfmpegManager.EnsureAsync(progress);
-            }
-
-            await _video.StartAsync(src, cfg);
-
-            if (_activeAudio != AudioMode.Off)
-                await _audio.StartAsync(_activeAudio, src.ProcessId);
-
-            _cursor.Start(src, () => cfg.CursorPolicy == "Mostrar");
+            SetStatus(config.CompatibilityMode ? "Modo compatibilidade" : "Preparando vídeo", Yellow, "Sincronizando primeiro quadro-chave");
+            await _video.StartAsync(source, config);
+            if (_activeAudio != AudioMode.Off) await _audio.StartAsync(_activeAudio, source.ProcessId);
+            _cursor.Start(source, () => config.CursorPolicy == "Mostrar");
         }
         catch (Exception ex)
         {
-            Ui(() => MessageBox.Show(
-                this,
-                ex.Message,
-                "AKTela Capture",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Error));
+            Ui(() => MessageBox.Show(this, ex.Message, "AKTela Capture", MessageBoxButtons.OK, MessageBoxIcon.Error));
         }
         finally
         {
@@ -499,27 +602,87 @@ internal sealed class MainForm : Form
         }
     }
 
+    private async Task RestartForKeyframe()
+    {
+        if (!_sharing || !_relayConnected || _relay.ViewerCount <= 0 || !_video.IsRunning || _activeSource is null || _activeConfig is null) return;
+        var now = Environment.TickCount64;
+        if (now - _lastKeyframeRestartAt < 1400) return;
+        _lastKeyframeRestartAt = now;
+
+        await _mediaGate.WaitAsync();
+        try
+        {
+            SetStatus("Sincronizando vídeo", Yellow, "Novo quadro-chave solicitado pelo espectador");
+            await _video.RestartAsync(_activeSource, _activeConfig);
+        }
+        finally
+        {
+            _mediaGate.Release();
+        }
+    }
+
+    private async Task EvaluateAdaptiveQuality()
+    {
+        if (!_sharing || _relay.ViewerCount <= 0 || _quality.SelectedItem is not QualityOption requested) return;
+        var diagnostics = _relay.GetDiagnostics();
+        var drops = diagnostics.VideoDropped;
+        var deltaDrops = Math.Max(0, drops - _lastDropSnapshot);
+        _lastDropSnapshot = drops;
+
+        var poor = diagnostics.LatencyMs > 520 || deltaDrops >= 8;
+        var stable = diagnostics.LatencyMs > 0 && diagnostics.LatencyMs < 260 && deltaDrops == 0;
+
+        if (poor)
+        {
+            _stableTicks = 0;
+            var lowered = QualityOption.LowerOneStep(_networkCapKey);
+            if (lowered != _networkCapKey)
+            {
+                _networkCapKey = lowered;
+                await ApplyEffectiveConfig("rede congestionada; qualidade reduzida automaticamente");
+            }
+            return;
+        }
+
+        if (stable)
+        {
+            _stableTicks++;
+            if (_stableTicks >= 9)
+            {
+                _stableTicks = 0;
+                var raised = QualityOption.HigherOneStep(_networkCapKey, requested.Key);
+                if (raised != _networkCapKey)
+                {
+                    _networkCapKey = raised;
+                    await ApplyEffectiveConfig("rede estável; qualidade elevada gradualmente");
+                }
+            }
+        }
+        else
+        {
+            _stableTicks = 0;
+        }
+    }
+
     private async Task Stop()
     {
+        _adaptiveTimer.Stop();
         _sharing = false;
-
+        _publisherBlocked = false;
         _cursor.Stop();
         await _video.StopAsync();
         await _audio.StopAsync();
         await _relay.StopAsync();
-
         _activeSource = null;
         _activeConfig = null;
+        _audience = AudienceCapabilities.Default();
         _outputValue.Text = "—";
         _fpsValue.Text = "—";
         _encoderValue.Text = "—";
         _viewerValue.Text = "0";
-
         Lock(false);
-
         _start.Text = "Iniciar transmissão";
         _start.BackColor = Accent;
-
         SetStatus("Pronto", Muted, "Cole o código exibido na Activity");
     }
 
@@ -527,31 +690,43 @@ internal sealed class MainForm : Form
     {
         if (!_sharing)
         {
-            SetStatus("Pronto", Muted, "Cole o código exibido na Activity");
+            if (!_publisherBlocked) SetStatus("Pronto", Muted, "Cole o código exibido na Activity");
             return;
         }
-
         if (!_relayConnected)
         {
-            SetStatus("Reconectando ao relay", Yellow, "A conexão será retomada automaticamente");
+            SetStatus("Reconectando ao relay", Yellow, "Reconexão automática com espera progressiva");
             return;
         }
-
         if (_relay.ViewerCount == 0)
         {
             SetStatus("Ligado · aguardando espectador", Green, $"Relay conectado · {_relay.LatencyMs} ms");
             return;
         }
+        if (!_audience.Ready)
+        {
+            if (_audience.Viewers > 0 && _audience.ReadyViewers >= _audience.Viewers && _audience.Reason.Contains("nenhum codec", StringComparison.OrdinalIgnoreCase))
+                SetStatus("Sem codec compatível", Red, "O espectador não oferece H.264/VP8 compatível com esta Activity.");
+            else
+                SetStatus("Negociando compatibilidade", Yellow, $"{_audience.ReadyViewers}/{_audience.Viewers} espectadores verificados");
+            return;
+        }
+        if (_activeConfig?.CompatibilityMode == true)
+        {
+            SetStatus($"Modo compatibilidade · {_relay.ViewerCount} assistindo", Yellow, CurrentDetail());
+            return;
+        }
+        SetStatus($"Ao vivo · {_relay.ViewerCount} assistindo", _relay.LatencyMs > 450 ? Yellow : Green, CurrentDetail());
+    }
 
+    private string CurrentDetail()
+    {
         var details = new List<string>();
-        if (_activeConfig is not null) details.Add($"{_activeConfig.Height}p · {_activeConfig.Fps} FPS");
+        if (_activeConfig is not null) details.Add(_activeConfig.ModeLabel);
+        if (_activeConfig is not null) details.Add(_activeConfig.VideoCodec == "vp8" ? "VP8" : $"H.264 {_activeConfig.VideoProfile}");
         if (_encoderValue.Text is not "—" and not "") details.Add(_encoderValue.Text);
         if (_relay.LatencyMs > 0) details.Add($"{_relay.LatencyMs} ms");
-
-        SetStatus(
-            $"Ao vivo · {_relay.ViewerCount} assistindo",
-            _relay.LatencyMs > 450 ? Yellow : Green,
-            details.Count > 0 ? string.Join(" · ", details) : "Transmissão ativa");
+        return details.Count > 0 ? string.Join(" · ", details) : "Transmissão ativa";
     }
 
     private void SetStatus(string text, Color color, string detail)
@@ -568,11 +743,9 @@ internal sealed class MainForm : Form
         _code.ReadOnly = locked;
         _code.TabStop = !locked;
         _paste.Enabled = true;
-
         _quality.Enabled = !locked;
         _sourceType.Enabled = !locked;
         _source.Enabled = !locked;
-
         _audioCheck.AutoCheck = !locked;
         _audioCheck.ForeColor = TextColor;
     }
@@ -582,12 +755,7 @@ internal sealed class MainForm : Form
         _tray.Icon = Icon;
         _tray.Text = "AKTela Capture";
         _tray.Visible = true;
-
-        _tray.MouseClick += (_, e) =>
-        {
-            if (e.Button == MouseButtons.Left)
-                Restore();
-        };
+        _tray.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) Restore(); };
         _tray.DoubleClick += (_, _) => Restore();
 
         var menu = new ContextMenuStrip();
@@ -597,26 +765,54 @@ internal sealed class MainForm : Form
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Abrir AKTela Capture", null, (_, _) => Restore());
         menu.Items.Add("Iniciar/encerrar   Ctrl+Shift+S", null, async (_, _) => await Toggle());
+        menu.Items.Add("Diagnóstico", null, (_, _) => ShowDiagnostics());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Sair", null, async (_, _) =>
         {
             _allowClose = true;
-
-            if (_sharing)
-                await Stop();
-
+            if (_sharing) await Stop();
             Close();
         });
-
         _tray.ContextMenuStrip = menu;
+    }
+
+    private void ShowDiagnostics()
+    {
+        var relay = _relay.GetDiagnostics();
+        var video = _video.GetDiagnostics();
+        var config = _activeConfig;
+        var text = string.Join(Environment.NewLine, new[]
+        {
+            $"Estado: {_status.Text}",
+            $"Relay: {(relay.Connected ? "conectado" : "desconectado")}",
+            $"Ping: {relay.LatencyMs} ms",
+            $"Espectadores: {relay.Viewers}",
+            $"Reconexões: {relay.Reconnects}",
+            $"Saída: {(config is null ? "—" : $"{config.Width}×{config.Height} @ {config.Fps} FPS")}",
+            $"Codec: {video.Codec} {video.Profile} ({video.CodecString})",
+            $"Encoder: {video.Encoder}",
+            $"FPS real: {video.Fps:0.0}",
+            $"Bitrate alvo: {(config is null ? "—" : $"{config.BitrateMbps} Mbps")}",
+            $"Frames: {video.Frames}",
+            $"Keyframes: {video.Keyframes}",
+            $"Reinícios de encoder: {video.Restarts}",
+            $"Vídeo enviado: {relay.VideoSent}",
+            $"Vídeo descartado: {relay.VideoDropped}",
+            $"Fila vídeo: {relay.VideoQueue}",
+            $"Áudio enviado: {relay.AudioSent}",
+            $"Áudio descartado: {relay.AudioDropped}",
+            $"Fila áudio: {relay.AudioQueue}",
+            $"Negociação: {_audience.ModeKey} · {_audience.VideoCodec}/{_audience.VideoProfile} · {_audience.Reason}",
+            string.IsNullOrWhiteSpace(relay.LastError) ? "Último erro: —" : $"Último erro: {relay.LastError}"
+        });
+        MessageBox.Show(this, text, "Diagnóstico AKTela", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
         _hotkeyRegistered = RegisterHotKey(Handle, HotkeyId, ModControl | ModShift, VkS);
-        if (!_hotkeyRegistered)
-            _detail.Text = "Atalho Ctrl + Shift + S indisponível; use o botão ou a bandeja.";
+        if (!_hotkeyRegistered) _detail.Text = "Atalho Ctrl + Shift + S indisponível; use o botão ou a bandeja.";
     }
 
     protected override void OnHandleDestroyed(EventArgs e)
@@ -648,43 +844,34 @@ internal sealed class MainForm : Form
     private void UpdateTray()
     {
         var status = _sharing
-            ? (_relay.ViewerCount > 0
-                ? $"Ao vivo · {_relay.ViewerCount} assistindo"
-                : "Ligado · aguardando espectador")
-            : "Pronto";
+            ? (_relay.ViewerCount > 0 ? _status.Text : "Ligado · aguardando espectador")
+            : (_publisherBlocked ? "Transmissão já em uso" : "Pronto");
         _trayStatusItem.Text = status;
         _tray.Text = _sharing
-            ? (_relay.ViewerCount > 0
-                ? $"AKTela · ao vivo · {_relay.ViewerCount} assistindo"
-                : "AKTela · aguardando espectador")
+            ? (_relay.ViewerCount > 0 ? $"AKTela · {_relay.ViewerCount} assistindo" : "AKTela · aguardando espectador")
             : "AKTela Capture · pronto";
     }
 
     private void Restore()
     {
-        if (!Visible)
-            Show();
-
+        if (!Visible) Show();
         WindowState = FormWindowState.Normal;
         Activate();
         BringToFront();
     }
 
-    private void OnClosing(object? s, FormClosingEventArgs e)
+    private void OnClosing(object? sender, FormClosingEventArgs e)
     {
         if (!_allowClose)
         {
             e.Cancel = true;
             Hide();
-
-            _tray.ShowBalloonTip(
-                1200,
-                "AKTela continua ativo",
-                "Clique com o botão esquerdo no ícone da bandeja para abrir.",
-                ToolTipIcon.Info);
+            _tray.ShowBalloonTip(1200, "AKTela continua ativo", "Clique com o botão esquerdo no ícone da bandeja para abrir.", ToolTipIcon.Info);
         }
         else
         {
+            _adaptiveTimer.Stop();
+            _adaptiveTimer.Dispose();
             _tray.Visible = false;
             _mediaGate.Dispose();
         }
@@ -716,7 +903,9 @@ internal sealed class MainForm : Form
             .Replace("Media Foundation · D3D11", "Media F.")
             .Replace("NVENC · compatibilidade", "NVENC")
             .Replace("Media Foundation · compatibilidade", "Media F.")
-            .Replace("Software H.264 · compatibilidade", "Software");
+            .Replace("Software H.264 · compatibilidade", "Software")
+            .Replace("Software VP8 · D3D11", "VP8")
+            .Replace("Software VP8 · compatibilidade", "VP8");
     }
 
     private void Label(string text, int x, int y)
@@ -731,56 +920,50 @@ internal sealed class MainForm : Form
         });
     }
 
-    private static void StyleText(TextBox t)
+    private static void StyleText(TextBox textBox)
     {
-        t.BackColor = Surface2;
-        t.ForeColor = TextColor;
-        t.BorderStyle = BorderStyle.FixedSingle;
-        t.Font = new Font("Segoe UI Variable Text", 10f);
+        textBox.BackColor = Surface2;
+        textBox.ForeColor = TextColor;
+        textBox.BorderStyle = BorderStyle.FixedSingle;
+        textBox.Font = new Font("Segoe UI Variable Text", 10f);
     }
 
-    private static void StyleCombo(ComboBox c)
+    private static void StyleCombo(ComboBox combo)
     {
-        c.DropDownStyle = ComboBoxStyle.DropDownList;
-        c.FlatStyle = FlatStyle.Flat;
-        c.BackColor = Surface2;
-        c.ForeColor = TextColor;
-        c.Font = new Font("Segoe UI Variable Text", 9f);
-        c.DrawMode = DrawMode.OwnerDrawFixed;
-        c.ItemHeight = 24;
-        c.DrawItem += (_, e) =>
+        combo.DropDownStyle = ComboBoxStyle.DropDownList;
+        combo.FlatStyle = FlatStyle.Flat;
+        combo.BackColor = Surface2;
+        combo.ForeColor = TextColor;
+        combo.Font = new Font("Segoe UI Variable Text", 9f);
+        combo.DrawMode = DrawMode.OwnerDrawFixed;
+        combo.ItemHeight = 24;
+        combo.DrawItem += (_, e) =>
         {
-            if (e.Index < 0)
-                return;
-
+            if (e.Index < 0) return;
             using var bg = new SolidBrush(Surface2);
             using var fg = new SolidBrush(TextColor);
             e.Graphics.FillRectangle(bg, e.Bounds);
-            var text = c.Items[e.Index]?.ToString() ?? string.Empty;
-            e.Graphics.DrawString(text, c.Font, fg, e.Bounds.Left + 6, e.Bounds.Top + 3);
+            var text = combo.Items[e.Index]?.ToString() ?? string.Empty;
+            e.Graphics.DrawString(text, combo.Font, fg, e.Bounds.Left + 6, e.Bounds.Top + 3);
         };
     }
 
-    private static void StyleButton(Button b, Color color)
+    private static void StyleButton(Button button, Color color)
     {
-        b.UseVisualStyleBackColor = false;
-        b.FlatStyle = FlatStyle.Flat;
-        b.FlatAppearance.BorderSize = 0;
-        b.FlatAppearance.MouseOverBackColor = ControlPaint.Light(color, 0.08f);
-        b.FlatAppearance.MouseDownBackColor = ControlPaint.Dark(color, 0.06f);
-        b.BackColor = color;
-        b.ForeColor = TextColor;
-        b.Cursor = Cursors.Hand;
+        button.UseVisualStyleBackColor = false;
+        button.FlatStyle = FlatStyle.Flat;
+        button.FlatAppearance.BorderSize = 0;
+        button.FlatAppearance.MouseOverBackColor = ControlPaint.Light(color, 0.08f);
+        button.FlatAppearance.MouseDownBackColor = ControlPaint.Dark(color, 0.06f);
+        button.BackColor = color;
+        button.ForeColor = TextColor;
+        button.Cursor = Cursors.Hand;
     }
 
     private void Ui(Action action)
     {
-        if (IsDisposed)
-            return;
-
-        if (InvokeRequired)
-            BeginInvoke(action);
-        else
-            action();
+        if (IsDisposed) return;
+        if (InvokeRequired) BeginInvoke(action);
+        else action();
     }
 }

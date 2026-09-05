@@ -5,7 +5,7 @@ namespace AKTelaCapture;
 
 internal static class FfmpegManager
 {
-    private const string DownloadUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip";
+    private const string DownloadUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-win64-gpl-9.0.zip";
     private static string ToolDir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AKTelaCapture", "tools");
     public static string PathToExe => Path.Combine(ToolDir, "ffmpeg.exe");
 
@@ -18,7 +18,7 @@ internal static class FfmpegManager
         try
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
-            http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("AKTelaCapture", "1.0"));
+            http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("AKTelaCapture", "2.0"));
             using var response = await http.GetAsync(DownloadUrl, HttpCompletionOption.ResponseHeadersRead, token);
             response.EnsureSuccessStatusCode();
             var total = response.Content.Headers.ContentLength;
