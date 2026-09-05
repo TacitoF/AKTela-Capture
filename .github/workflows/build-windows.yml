@@ -1,4 +1,4 @@
-name: Gerar AKTela Capture Clean.exe
+name: Gerar AKTela Capture Stability.exe
 
 on:
   workflow_dispatch:
@@ -8,15 +8,18 @@ on:
       - 'AKTelaCaptureV1/**'
       - '.github/workflows/build-windows.yml'
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: windows-latest
     steps:
       - name: Baixar código
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Instalar .NET 9
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '9.0.x'
 
@@ -42,8 +45,8 @@ jobs:
           Get-Item 'publish/AKTela Capture.exe' | Format-List Name,Length,LastWriteTime
 
       - name: Publicar artefato
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
-          name: AKTela-Capture-v1.4-Windows-x64
+          name: AKTela-Capture-Stability-v2-Windows-x64
           path: publish/AKTela Capture.exe
           if-no-files-found: error
