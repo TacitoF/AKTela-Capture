@@ -188,8 +188,9 @@ internal sealed class VideoStreamer : IAsyncDisposable
                         if (!key) continue;
                         var info = H264AccessUnitReader.Inspect(data) ?? reader.StreamInfo;
                         if (info is null) continue;
-                        if (!IsCompatible(cfg, info, out validationError))
+                        if (!IsCompatible(cfg, info, out var incompatibility))
                         {
+                            validationError = incompatibility;
                             try { if (!process.HasExited) process.Kill(true); } catch { }
                             break;
                         }
@@ -458,10 +459,8 @@ internal sealed class VideoStreamer : IAsyncDisposable
         _ => "baseline"
     };
 
-    // AVCodecContext usa os IDs oficiais do H.264. Alguns builds do FFmpeg no
-    // Windows (principalmente h264_mf e, em certas builds, libx264) não aceitam
-    // o texto "baseline" em -profile:v e tentam interpretá-lo como número.
-    // Usar 66/77/100 evita o erro "Undefined constant ... baseline".
+    // Media Foundation usa os IDs numéricos de AVCodecContext.
+    // NVENC e libx264 possuem opções privadas e recebem o nome do perfil.
     private static string ProfileId(StreamConfig cfg) => cfg.VideoProfile switch
     {
         "main" => "77",
@@ -523,12 +522,17 @@ internal sealed class VideoStreamer : IAsyncDisposable
     private static void X264(ProcessStartInfo p, StreamConfig cfg)
     {
         var buf = Math.Max(160, cfg.BitrateMbps * 1000 / Math.Max(1, cfg.Fps));
+        var profile = ProfileName(cfg);
         Add(p,
             "-c:v", "libx264",
             "-preset", "ultrafast",
             "-tune", "zerolatency",
-            "-profile:v", ProfileId(cfg),
-            "-level:v", H264LevelIdc(cfg).ToString(),
+            "-profile:v", profile,
+            "-level:v", H264Level(cfg),
+            // ultrafast desativa CABAC e 8x8dct. O perfil é um limite de recursos,
+            // então habilite os recursos necessários para gerar o SPS negociado.
+            "-coder", profile == "baseline" ? "vlc" : "ac",
+            "-8x8dct", profile == "high" ? "1" : "0",
             "-b:v", $"{cfg.BitrateMbps}M",
             "-maxrate", $"{cfg.BitrateMbps}M",
             "-bufsize", $"{buf}k",

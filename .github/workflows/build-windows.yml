@@ -6,6 +6,13 @@ on:
     branches: [ main ]
     paths:
       - 'AKTelaCaptureV1/**'
+      - 'tests/**'
+      - '.github/workflows/build-windows.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'AKTelaCaptureV1/**'
+      - 'tests/**'
       - '.github/workflows/build-windows.yml'
 
 permissions:
@@ -14,6 +21,7 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - name: Baixar código
         uses: actions/checkout@v6
@@ -36,6 +44,9 @@ jobs:
       - name: Gerar executável Windows x64
         run: dotnet publish AKTelaCaptureV1/AKTelaCapture.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish
 
+      - name: Validar perfis H.264 e continuidade da captura
+        run: dotnet run --project tests/AKTelaCapture.SmokeTests/AKTelaCapture.SmokeTests.csproj -c Release
+
       - name: Conferir executável
         shell: pwsh
         run: |
@@ -47,6 +58,6 @@ jobs:
       - name: Publicar artefato
         uses: actions/upload-artifact@v6
         with:
-          name: AKTela-Capture-Stability-v2.2-Windows-x64
+          name: AKTela-Capture-Stability-v2.2.1-Windows-x64
           path: publish/AKTela Capture.exe
           if-no-files-found: error
