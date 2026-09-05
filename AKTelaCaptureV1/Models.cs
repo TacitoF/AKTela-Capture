@@ -94,8 +94,8 @@ internal sealed record AudienceCapabilities(
         viewers == 0,
         "720p30",
         "h264",
-        "baseline",
-        "avc1.42E01F",
+        "main",
+        "avc1.4D401F",
         true,
         viewers == 0 ? "sem espectadores" : "aguardando recursos dos espectadores");
 }

@@ -398,7 +398,7 @@ internal sealed class MainForm : Form
         var effectiveKey = QualityOption.Min(QualityOption.Min(requestedKey, audienceKey), _networkCapKey);
 
         var codec = _audience.Viewers > 0 ? _audience.VideoCodec : "h264";
-        var profile = _audience.Viewers > 0 ? _audience.VideoProfile : "baseline";
+        var profile = _audience.Viewers > 0 ? _audience.VideoProfile : "main";
         if (codec == "vp8") effectiveKey = "720p30";
         if (profile != "baseline" && profile != "main" && profile != "high") profile = "baseline";
 
@@ -471,8 +471,8 @@ internal sealed class MainForm : Form
                     Fps = 30,
                     BitrateMbps = 4,
                     VideoCodec = "h264",
-                    VideoProfile = "baseline",
-                    ExpectedCodec = "avc1.42E01F",
+                    VideoProfile = "main",
+                    ExpectedCodec = "avc1.4D401F",
                     CompatibilityMode = true
                 };
                 string probeEncoder;

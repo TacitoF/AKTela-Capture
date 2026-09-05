@@ -142,10 +142,13 @@ internal sealed class VideoStreamer : IAsyncDisposable
 
     private static List<(string Name, ProcessStartInfo Psi)> H264Attempts(string ffmpeg, CaptureSource source, StreamConfig cfg) =>
     [
-        ("NVENC · D3D11", BuildDdaNvenc(ffmpeg, source, cfg, true)),
-        ("NVENC · D3D11 compatível", BuildDdaNvenc(ffmpeg, source, cfg, false)),
-        ("Media Foundation · D3D11", BuildDdaMf(ffmpeg, source, cfg)),
+        // O scale_d3d11 direto foi removido do caminho padrão: alguns drivers/GPUs
+        // retornam E_INVALIDARG ao criar a textura de saída. Mantemos Desktop
+        // Duplication para captura, baixamos o frame para memória e usamos NVENC
+        // para codificar por hardware. É um pouco menos zero-copy, mas muito mais estável.
+        ("NVENC · Desktop Duplication", BuildDdaNvenc(ffmpeg, source, cfg, false)),
         ("NVENC · compatibilidade", BuildGdiNvenc(ffmpeg, source, cfg)),
+        ("Media Foundation · Desktop Duplication", BuildDdaMf(ffmpeg, source, cfg)),
         ("Media Foundation · compatibilidade", BuildGdiMf(ffmpeg, source, cfg)),
         ("Software H.264 · compatibilidade", BuildGdiX264(ffmpeg, source, cfg))
     ];
@@ -455,6 +458,17 @@ internal sealed class VideoStreamer : IAsyncDisposable
         _ => "baseline"
     };
 
+    // AVCodecContext usa os IDs oficiais do H.264. Alguns builds do FFmpeg no
+    // Windows (principalmente h264_mf e, em certas builds, libx264) não aceitam
+    // o texto "baseline" em -profile:v e tentam interpretá-lo como número.
+    // Usar 66/77/100 evita o erro "Undefined constant ... baseline".
+    private static string ProfileId(StreamConfig cfg) => cfg.VideoProfile switch
+    {
+        "main" => "77",
+        "high" => "100",
+        _ => "66"
+    };
+
     private static void Nvenc(ProcessStartInfo p, StreamConfig cfg)
     {
         var buf = Math.Max(160, cfg.BitrateMbps * 1000 / Math.Max(1, cfg.Fps));
@@ -472,6 +486,7 @@ internal sealed class VideoStreamer : IAsyncDisposable
             "-forced-idr", "1",
             "-strict_gop", "1",
             "-g", cfg.Fps.ToString(),
+            // NVENC possui opções privadas nomeadas para profile/level.
             "-profile:v", ProfileName(cfg),
             "-level:v", H264Level(cfg),
             "-r:v", cfg.Fps.ToString(),
@@ -495,8 +510,8 @@ internal sealed class VideoStreamer : IAsyncDisposable
             "-bufsize", $"{buf}k",
             "-g", cfg.Fps.ToString(),
             "-bf", "0",
-            "-profile:v", ProfileName(cfg),
-            "-level:v", H264Level(cfg),
+            "-profile:v", ProfileId(cfg),
+            "-level:v", H264LevelIdc(cfg).ToString(),
             "-r:v", cfg.Fps.ToString(),
             "-fps_mode", "cfr",
             "-bsf:v", "h264_metadata=aud=insert",
@@ -512,8 +527,8 @@ internal sealed class VideoStreamer : IAsyncDisposable
             "-c:v", "libx264",
             "-preset", "ultrafast",
             "-tune", "zerolatency",
-            "-profile:v", ProfileName(cfg),
-            "-level:v", H264Level(cfg),
+            "-profile:v", ProfileId(cfg),
+            "-level:v", H264LevelIdc(cfg).ToString(),
             "-b:v", $"{cfg.BitrateMbps}M",
             "-maxrate", $"{cfg.BitrateMbps}M",
             "-bufsize", $"{buf}k",

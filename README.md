@@ -1,18 +1,9 @@
-# AKTela Capture — Stability v2.1
+# AKTela Capture — Stability v2.2
 
-Aplicativo Windows auxiliar da AKTela.
+Correção de compatibilidade do encoder no Windows.
 
-## Correções v2.1
-
-- Corrige ambiguidade de overload em `H264AccessUnitReader` que impedia o build no GitHub Actions.
-- Remove `stackalloc` dentro do loop do leitor IVF.
-- Remove aviso nullable do ícone da janela.
-- Atualiza Concentus para `OpusCodecFactory` + API `Span`, usando a interface moderna e podendo aproveitar o backend nativo quando disponível.
-- Torna o envio WebSocket mais justo: controle, vídeo e áudio avançam no mesmo ciclo, evitando starvation do vídeo pelo áudio/cursor.
-- Mantém as melhorias Stability v2: codec negociado, validação do SPS real, keyframe sob demanda, qualidade adaptativa, diagnóstico, reconexão e apenas um transmissor por sala.
-
-## Estrutura
-
-- Projeto: `AKTelaCaptureV1/AKTelaCapture.csproj`
-- Workflow: `.github/workflows/build-windows.yml`
-- Relay: `wss://aktela-relay.tacito1-filho.workers.dev/ws`
+- Remove `scale_d3d11` do caminho padrão por instabilidade em alguns drivers.
+- Desktop Duplication continua sendo usado para captura; NVENC continua sendo o encoder preferencial.
+- `h264_mf` e `libx264` recebem IDs numéricos de profile/level (66/77/100), evitando `Undefined constant ... baseline`.
+- H.264 Main é o perfil preferido quando os espectadores confirmam suporte; Baseline continua como fallback.
+- O SPS real continua sendo validado antes de qualquer quadro ser enviado.
