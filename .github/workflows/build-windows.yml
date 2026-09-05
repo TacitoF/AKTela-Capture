@@ -1,9 +1,9 @@
-name: Gerar AKTela Capture Stability.exe
+name: Gerar AKTela Capture.exe
 
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [ main, "codex/**" ]
     paths:
       - 'AKTelaCaptureV1/**'
       - 'tests/**'
@@ -47,6 +47,17 @@ jobs:
       - name: Validar perfis H.264 e continuidade da captura
         run: dotnet run --project tests/AKTelaCapture.SmokeTests/AKTelaCapture.SmokeTests.csproj -c Release
 
+      - name: Validar interface Windows e gerar capturas
+        run: dotnet run --project tests/AKTelaCapture.UiTests/AKTelaCapture.UiTests.csproj -c Release
+
+      - name: Publicar capturas da interface
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: AKTela-Capture-UI
+          path: ui-captures/*.png
+          if-no-files-found: warn
+
       - name: Conferir executável
         shell: pwsh
         run: |
@@ -58,6 +69,28 @@ jobs:
       - name: Publicar artefato
         uses: actions/upload-artifact@v6
         with:
-          name: AKTela-Capture-Stability-v2.2.1-Windows-x64
+          name: AKTela-Capture-v2.3.0-Windows-x64
           path: publish/AKTela Capture.exe
           if-no-files-found: error
+
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: AKTela-Capture-v2.3.0-Windows-x64
+          path: release
+      - name: Publicar versão testada
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          cd release
+          mv 'AKTela Capture.exe' AKTela-Capture.exe
+          sha256sum AKTela-Capture.exe > SHA256SUMS.txt
+          gh release create v2.3.0 AKTela-Capture.exe SHA256SUMS.txt --target "$COMMIT_SHA" --title 'AKTela Capture 2.3.0' --notes 'Nova interface, correções de áudio e negociação, fila de vídeo que preserva quadros dependentes. Windows x64, independente de instalação do .NET. O FFmpeg é baixado na primeira transmissão. Validado com testes de H.264 e interface Windows; captura real de desktop, GPU e sessão Discord requer teste no computador de destino.'

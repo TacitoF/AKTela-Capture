@@ -2,6 +2,19 @@ using System.Diagnostics;
 using System.Reflection;
 using AKTelaCapture;
 
+// Exercise overflow with real AKV5 packets: never emit a dependent delta after loss.
+var queue = new VideoPacketQueue(2);
+byte[] Packet(bool key) => PacketProtocol.Create(MediaKind.Video, key, 0, 33333, new byte[] { 1 });
+Check(!queue.TryWrite(Packet(false)), "Delta aceito antes do primeiro IDR");
+var idr = Packet(true);
+Check(queue.TryWrite(idr) && queue.TryWrite(Packet(false)), "Fila não aceitou GOP inicial");
+Check(!queue.TryWrite(Packet(false)) && queue.Count == 0, "Overflow não invalidou a cadeia de referência");
+Check(!queue.TryWrite(Packet(false)), "Delta aceito depois de perda de referência");
+Check(queue.TryWrite(idr) && queue.TryRead(out var resumed) && ReferenceEquals(idr, resumed), "IDR não recuperou a fila");
+queue.Reset();
+Check(!queue.TryWrite(Packet(false)), "Reconexão aceitou delta antigo");
+Console.WriteLine("PASS fila de vídeo: início, overflow, recuperação e reconexão.");
+
 // A fonte sintética dispensa desktop/GPU, mas atravessa os mesmos argumentos,
 // leitor de SPS, validação e loop de envio usados pela captura real.
 var ffmpeg = args.Length > 0 ? args[0] : await FfmpegManager.EnsureAsync();

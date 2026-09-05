@@ -17,7 +17,7 @@ internal sealed class RelayClient : IAsyncDisposable
 
     private CancellationTokenSource? _cts;
     private Task? _task;
-    private Channel<byte[]>? _videoQueue;
+    private VideoPacketQueue? _videoQueue;
     private Channel<byte[]>? _audioQueue;
     private Channel<byte[]>? _controlQueue;
     private TaskCompletionSource<bool>? _firstHandshake;
@@ -34,14 +34,14 @@ internal sealed class RelayClient : IAsyncDisposable
 
     private long _videoSent;
     private long _audioSent;
-    private long _videoDropped;
+    private readonly SemaphoreSlim _sendSignal = new(0, 1);
     private long _audioDropped;
 
     public bool IsRunning => _task is { IsCompleted: false };
     public bool IsConnected { get; private set; }
     public int ViewerCount => Volatile.Read(ref _viewers);
     public long LatencyMs => Volatile.Read(ref _latency);
-    public long VideoDropped => Interlocked.Read(ref _videoDropped);
+    public long VideoDropped => (_videoQueue?.Dropped ?? 0);
 
     public event Action<bool>? ConnectionChanged;
     public event Action<int>? ViewerCountChanged;
@@ -66,7 +66,7 @@ internal sealed class RelayClient : IAsyncDisposable
         if (IsRunning) return;
 
         _room = Normalize(room);
-        if (!System.Text.RegularExpressions.Regex.IsMatch(_room, "^[A-Z2-9]{6}$"))
+        if (!IsValidCode(_room))
             throw new ArgumentException("Código inválido. Use os 6 caracteres mostrados na Activity.");
 
         await CheckHealthAsync();
@@ -78,15 +78,10 @@ internal sealed class RelayClient : IAsyncDisposable
         _reconnects = 0;
         Interlocked.Exchange(ref _videoSent, 0);
         Interlocked.Exchange(ref _audioSent, 0);
-        Interlocked.Exchange(ref _videoDropped, 0);
+        
         Interlocked.Exchange(ref _audioDropped, 0);
 
-        _videoQueue = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(VideoCapacity)
-        {
-            FullMode = BoundedChannelFullMode.DropOldest,
-            SingleReader = true,
-            SingleWriter = false
-        });
+        _videoQueue = new VideoPacketQueue(VideoCapacity);
 
         _audioQueue = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(AudioCapacity)
         {
@@ -104,7 +99,8 @@ internal sealed class RelayClient : IAsyncDisposable
 
         _firstHandshake = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         _cts = new CancellationTokenSource();
-        _task = Task.Run(() => Run(_cts.Token));
+        var token = _cts.Token;
+        _task = Task.Run(() => Run(token));
 
         var completed = await Task.WhenAny(_firstHandshake.Task, Task.Delay(7000));
         if (completed != _firstHandshake.Task)
@@ -139,28 +135,25 @@ internal sealed class RelayClient : IAsyncDisposable
     private bool QueueVideo(byte[] packet)
     {
         var queue = _videoQueue;
-        if (queue is null) return false;
-
-        if (PacketProtocol.IsKeyframe(packet))
-        {
-            while (queue.Reader.TryRead(out _)) Interlocked.Increment(ref _videoDropped);
-        }
-        else if (QueueCount(queue) >= VideoCapacity)
-        {
-            Interlocked.Increment(ref _videoDropped);
-        }
-
-        var ok = queue.Writer.TryWrite(packet);
+        if (queue is null || !IsConnected) return false;
+        var ok = queue.TryWrite(packet);
+        if (ok) SignalSender();
         PublishDiagnostics();
         return ok;
+    }
+
+    private void SignalSender()
+    {
+        try { _sendSignal.Release(); } catch (SemaphoreFullException) { }
     }
 
     private bool QueueAudio(byte[] packet)
     {
         var queue = _audioQueue;
-        if (queue is null) return false;
+        if (queue is null || !IsConnected) return false;
         if (QueueCount(queue) >= AudioCapacity) Interlocked.Increment(ref _audioDropped);
         var ok = queue.Writer.TryWrite(packet);
+        if (ok) SignalSender();
         return ok;
     }
 
@@ -168,7 +161,7 @@ internal sealed class RelayClient : IAsyncDisposable
     {
         try
         {
-            return _controlQueue?.Writer.TryWrite(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(obj))) == true;
+            return QueueControlText(JsonSerializer.Serialize(obj));
         }
         catch
         {
@@ -178,7 +171,12 @@ internal sealed class RelayClient : IAsyncDisposable
 
     private bool QueueControlText(string text)
     {
-        try { return _controlQueue?.Writer.TryWrite(Encoding.UTF8.GetBytes(text)) == true; }
+        try
+        {
+            var ok = _controlQueue?.Writer.TryWrite(Encoding.UTF8.GetBytes(text)) == true;
+            if (ok) SignalSender();
+            return ok;
+        }
         catch { return false; }
     }
 
@@ -192,7 +190,7 @@ internal sealed class RelayClient : IAsyncDisposable
         if (cts is not null)
         {
             cts.Cancel();
-            try { if (task is not null) await Task.WhenAny(task, Task.Delay(1400)); } catch { }
+            try { if (task is not null) await task; } catch { }
             cts.Dispose();
         }
 
@@ -222,6 +220,9 @@ internal sealed class RelayClient : IAsyncDisposable
 
             try
             {
+                _videoQueue?.Reset();
+                while (_audioQueue?.Reader.TryRead(out _) == true) { }
+                while (_controlQueue?.Reader.TryRead(out _) == true) { }
                 await ws.ConnectAsync(new Uri($"{RelayWs}?role=publisher&room={Uri.EscapeDataString(_room)}&publisherId={Uri.EscapeDataString(_publisherId)}"), token);
                 _lastPongAt = Environment.TickCount64;
 
@@ -311,7 +312,7 @@ internal sealed class RelayClient : IAsyncDisposable
 
             // Vídeo primeiro: em compartilhamento de tela, um quadro atual é mais útil
             // do que deixar a fila acumular atraso.
-            if (video.Reader.TryRead(out var videoData))
+            if (video.TryRead(out var videoData))
             {
                 await ws.SendAsync(videoData, WebSocketMessageType.Binary, true, token);
                 Interlocked.Increment(ref _videoSent);
@@ -329,13 +330,8 @@ internal sealed class RelayClient : IAsyncDisposable
 
             if (sentSomething) continue;
 
-            var waits = new[]
-            {
-                control.Reader.WaitToReadAsync(token).AsTask(),
-                video.Reader.WaitToReadAsync(token).AsTask(),
-                audio.Reader.WaitToReadAsync(token).AsTask()
-            };
-            await Task.WhenAny(waits);
+            // A single bounded wake-up avoids accumulating abandoned channel waiters.
+            await _sendSignal.WaitAsync(token);
         }
     }
 
@@ -479,9 +475,9 @@ internal sealed class RelayClient : IAsyncDisposable
         LatencyMs,
         Interlocked.Read(ref _videoSent),
         Interlocked.Read(ref _audioSent),
-        Interlocked.Read(ref _videoDropped),
+        (_videoQueue?.Dropped ?? 0),
         Interlocked.Read(ref _audioDropped),
-        QueueCount(_videoQueue),
+        (_videoQueue?.Count ?? 0),
         QueueCount(_audioQueue),
         _reconnects,
         _lastError);
@@ -493,6 +489,9 @@ internal sealed class RelayClient : IAsyncDisposable
         if (channel?.Reader.CanCount == true) return channel.Reader.Count;
         return 0;
     }
+
+    public static bool IsValidCode(string value) =>
+        System.Text.RegularExpressions.Regex.IsMatch(value, "^[A-Z2-9]{6}$");
 
     public static string Normalize(string value) => new(value.Trim().ToUpperInvariant().Where(char.IsLetterOrDigit).Take(6).ToArray());
 

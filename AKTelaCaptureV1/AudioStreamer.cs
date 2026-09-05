@@ -32,7 +32,8 @@ internal sealed class AudioStreamer : IAsyncDisposable
             _recorder.DataAvailable += OnData;
             _recorder.StartRecording();
             _cts = new CancellationTokenSource();
-            _task = Task.Run(() => EncodeLoop(_cts.Token));
+            var token = _cts.Token;
+            _task = Task.Run(() => EncodeLoop(token));
         }
         catch (Exception ex) { await StopAsync(); Error?.Invoke(ex.Message); }
     }

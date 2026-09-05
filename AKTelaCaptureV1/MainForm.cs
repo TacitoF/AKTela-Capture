@@ -2,7 +2,7 @@ using System.Runtime.InteropServices;
 
 namespace AKTelaCapture;
 
-internal sealed class MainForm : Form
+internal sealed partial class MainForm : Form
 {
     private readonly RelayClient _relay = new();
     private readonly VideoStreamer _video = new();
@@ -51,12 +51,12 @@ internal sealed class MainForm : Form
     private int _stableTicks;
     private long _lastKeyframeRestartAt;
 
-    private static readonly Color Bg = Color.FromArgb(10, 14, 22);
-    private static readonly Color Surface = Color.FromArgb(16, 23, 35);
-    private static readonly Color Surface2 = Color.FromArgb(22, 33, 50);
+    private static readonly Color Bg = Color.FromArgb(16, 19, 25);
+    private static readonly Color Surface = Color.FromArgb(24, 29, 37);
+    private static readonly Color Surface2 = Color.FromArgb(33, 40, 51);
     private static readonly Color TextColor = Color.FromArgb(239, 243, 250);
-    private static readonly Color Muted = Color.FromArgb(184, 194, 211);
-    private static readonly Color Accent = Color.FromArgb(50, 190, 236);
+    private static readonly Color Muted = Color.FromArgb(155, 168, 187);
+    private static readonly Color Accent = Color.FromArgb(111, 231, 193);
     private static readonly Color Red = Color.FromArgb(245, 85, 105);
     private static readonly Color Green = Color.FromArgb(61, 211, 157);
     private static readonly Color Yellow = Color.FromArgb(224, 178, 76);
@@ -69,9 +69,13 @@ internal sealed class MainForm : Form
         base.Text = "AKTela Capture";
         BackColor = Bg;
         ForeColor = TextColor;
-        ClientSize = new Size(430, 704);
-        FormBorderStyle = FormBorderStyle.FixedSingle;
-        MaximizeBox = false;
+        Font = new Font("Segoe UI", 10f);
+        AutoScaleMode = AutoScaleMode.Dpi;
+        AutoScaleDimensions = new SizeF(96, 96);
+        ClientSize = new Size(960, 740);
+        MinimumSize = new Size(800, 600);
+        FormBorderStyle = FormBorderStyle.Sizable;
+        DoubleBuffered = true;
         StartPosition = FormStartPosition.CenterScreen;
 
         BuildUi();
@@ -81,168 +85,6 @@ internal sealed class MainForm : Form
 
         _adaptiveTimer.Tick += async (_, _) => await EvaluateAdaptiveQuality();
         FormClosing += OnClosing;
-    }
-
-    private void BuildUi()
-    {
-        Controls.Add(new Label
-        {
-            Text = "AKTela Capture",
-            Font = new Font("Segoe UI Variable Display", 15, FontStyle.Bold),
-            ForeColor = TextColor,
-            AutoSize = true,
-            Location = new Point(62, 22)
-        });
-
-        Controls.Add(new Label
-        {
-            Text = "Compartilhamento leve e direto",
-            Font = new Font("Segoe UI Variable Text", 8.5f),
-            ForeColor = Muted,
-            AutoSize = true,
-            Location = new Point(63, 49)
-        });
-
-        Controls.Add(new PictureBox
-        {
-            Image = AppIcon.Load().ToBitmap(),
-            SizeMode = PictureBoxSizeMode.StretchImage,
-            Bounds = new Rectangle(20, 20, 32, 32)
-        });
-
-        _status.Text = "Pronto";
-        _status.Font = new Font("Segoe UI Variable Text", 9.5f, FontStyle.Bold);
-        _status.ForeColor = Muted;
-        _status.AutoSize = true;
-        _status.Location = new Point(20, 92);
-        Controls.Add(_status);
-
-        _detail.Text = "Cole o código exibido na Activity";
-        _detail.Font = new Font("Segoe UI Variable Text", 8f);
-        _detail.ForeColor = Muted;
-        _detail.AutoSize = true;
-        _detail.MaximumSize = new Size(390, 34);
-        _detail.Location = new Point(20, 115);
-        Controls.Add(_detail);
-
-        Label("Código da Activity", 20, 153);
-
-        _code.Bounds = new Rectangle(20, 174, 296, 38);
-        _code.CharacterCasing = CharacterCasing.Upper;
-        _code.MaxLength = 6;
-        _code.Font = new Font("Consolas", 11f, FontStyle.Bold);
-        StyleText(_code);
-        Controls.Add(_code);
-
-        _paste.Text = "Colar";
-        _paste.Bounds = new Rectangle(324, 174, 86, 38);
-        StyleButton(_paste, Surface2);
-        _paste.Click += (_, _) =>
-        {
-            if (_sharing) return;
-            try { _code.Text = RelayClient.Normalize(Clipboard.GetText()); } catch { }
-        };
-        Controls.Add(_paste);
-
-        Label("Modo", 20, 231);
-        Controls.AddRange([
-            PresetButton("Jogo", 20, 253, "Jogo"),
-            PresetButton("Filme", 151, 253, "Filme"),
-            PresetButton("Leve", 282, 253, "Leve")
-        ]);
-
-        Label("Qualidade", 20, 310);
-        _quality.Bounds = new Rectangle(20, 331, 185, 36);
-        StyleCombo(_quality);
-        foreach (var q in QualityOption.All) _quality.Items.Add(q);
-        _quality.SelectedItem = QualityOption.All[0];
-        Controls.Add(_quality);
-
-        Label("Fonte", 225, 310);
-        _sourceType.Bounds = new Rectangle(225, 331, 185, 36);
-        StyleCombo(_sourceType);
-        _sourceType.Items.AddRange(["Tela", "Janela"]);
-        _sourceType.SelectedIndex = 0;
-        Controls.Add(_sourceType);
-
-        Label("Janela ou tela", 20, 386);
-        _source.Bounds = new Rectangle(20, 407, 390, 36);
-        StyleCombo(_source);
-        Controls.Add(_source);
-
-        var audioPanel = new Panel { Bounds = new Rectangle(20, 458, 390, 48), BackColor = Surface };
-        audioPanel.Controls.Add(new Label
-        {
-            Text = "Áudio da transmissão",
-            AutoSize = true,
-            ForeColor = TextColor,
-            Font = new Font("Segoe UI Variable Text", 8.8f, FontStyle.Bold),
-            Location = new Point(12, 7)
-        });
-        audioPanel.Controls.Add(new Label
-        {
-            Text = "Evita retorno do áudio do Discord quando possível",
-            AutoSize = true,
-            ForeColor = Muted,
-            Font = new Font("Segoe UI Variable Text", 7.2f),
-            Location = new Point(12, 27)
-        });
-        Controls.Add(audioPanel);
-
-        _audioCheck.Text = "Ligado";
-        _audioCheck.Checked = true;
-        _audioCheck.Appearance = Appearance.Button;
-        _audioCheck.TextAlign = ContentAlignment.MiddleCenter;
-        _audioCheck.Bounds = new Rectangle(300, 9, 76, 30);
-        _audioCheck.FlatStyle = FlatStyle.Flat;
-        _audioCheck.FlatAppearance.BorderSize = 0;
-        _audioCheck.ForeColor = Color.White;
-        _audioCheck.BackColor = Accent;
-        _audioCheck.Font = new Font("Segoe UI Variable Text", 8f, FontStyle.Bold);
-        _audioCheck.Cursor = Cursors.Hand;
-        _audioCheck.CheckedChanged += (_, _) =>
-        {
-            if (_sharing) return;
-            _audioCheck.Text = _audioCheck.Checked ? "Ligado" : "Desligado";
-            _audioCheck.BackColor = _audioCheck.Checked ? Accent : Surface2;
-        };
-        audioPanel.Controls.Add(_audioCheck);
-
-        var stats = new Panel { Bounds = new Rectangle(20, 518, 390, 62), BackColor = Surface };
-        AddStat(stats, "Saída", _outputValue, 10);
-        AddStat(stats, "Captura", _fpsValue, 106);
-        AddStat(stats, "Encoder", _encoderValue, 202);
-        AddStat(stats, "Assistindo", _viewerValue, 298);
-        _outputValue.Text = "—";
-        _fpsValue.Text = "—";
-        _encoderValue.Text = "—";
-        _viewerValue.Text = "0";
-        Controls.Add(stats);
-
-        _start.Text = "Iniciar transmissão";
-        _start.Bounds = new Rectangle(20, 598, 390, 50);
-        StyleButton(_start, Accent);
-        _start.Font = new Font("Segoe UI Variable Text", 10f, FontStyle.Bold);
-        Controls.Add(_start);
-
-        Controls.Add(new Label
-        {
-            Text = "Atalho global: Ctrl + Shift + S   •   Clique no ícone da bandeja para abrir",
-            AutoSize = false,
-            TextAlign = ContentAlignment.MiddleCenter,
-            Bounds = new Rectangle(20, 657, 390, 24),
-            ForeColor = Muted,
-            Font = new Font("Segoe UI Variable Text", 7.5f)
-        });
-    }
-
-    private Button PresetButton(string text, int x, int y, string preset)
-    {
-        var button = new Button { Text = text, Bounds = new Rectangle(x, y, 125, 38) };
-        StyleButton(button, Surface2);
-        button.Font = new Font("Segoe UI Variable Text", 9f, FontStyle.Bold);
-        button.Click += (_, _) => { if (!_sharing) ApplyPreset(preset); };
-        return button;
     }
 
     private void ApplyPreset(string preset)
@@ -263,6 +105,7 @@ internal sealed class MainForm : Form
             _sourceType.SelectedItem = "Tela";
             _quality.SelectedItem = QualityOption.All.First(q => q.Key == "720p30");
         }
+        UpdatePresetButtons();
         LoadSources();
     }
 
@@ -365,11 +208,18 @@ internal sealed class MainForm : Form
     private void LoadSources()
     {
         if (_sharing) return;
+        var selected = _source.SelectedItem as CaptureSource;
         _source.Items.Clear();
         var type = _sourceType.SelectedItem?.ToString() ?? "Tela";
         var sources = type == "Janela" ? SourceEnumerator.Windows() : SourceEnumerator.Displays();
         foreach (var source in sources) _source.Items.Add(source);
-        if (_source.Items.Count > 0) _source.SelectedIndex = 0;
+        if (_source.Items.Count > 0)
+        {
+            _source.SelectedItem = _source.Items.Cast<CaptureSource>().FirstOrDefault(s =>
+                s.Kind == selected?.Kind && s.WindowHandle == selected.WindowHandle && s.OutputIndex == selected.OutputIndex);
+            if (_source.SelectedIndex < 0) _source.SelectedIndex = 0;
+        }
+        UpdateSourceSummary();
         _start.Enabled = _source.Items.Count > 0;
     }
 
@@ -438,6 +288,12 @@ internal sealed class MainForm : Form
 
             if (_source.SelectedItem is not CaptureSource source || _quality.SelectedItem is not QualityOption requested) return;
             var code = RelayClient.Normalize(_code.Text);
+            if (!RelayClient.IsValidCode(code))
+            {
+                SetStatus("Confira o código", Yellow, "Digite os 6 caracteres exibidos na Activity do Discord.");
+                _code.Focus();
+                return;
+            }
             _publisherBlocked = false;
             _audience = AudienceCapabilities.Default();
             _networkCapKey = requested.Key;
@@ -451,6 +307,7 @@ internal sealed class MainForm : Form
 
             try
             {
+                Lock(true);
                 _start.Enabled = false;
                 SetStatus("Verificando relay", Yellow, "Teste 1/4");
                 await RelayClient.CheckHealthAsync();
@@ -501,7 +358,7 @@ internal sealed class MainForm : Form
                 _viewerValue.Text = Math.Max(0, _relay.ViewerCount).ToString();
                 Lock(true);
                 _start.Text = "Encerrar transmissão";
-                _start.BackColor = Red;
+                StyleButton(_start, Red);
                 _adaptiveTimer.Start();
                 RefreshStatus();
 
@@ -510,17 +367,13 @@ internal sealed class MainForm : Form
             }
             catch (Exception ex)
             {
-                await _relay.StopAsync();
-                _sharing = false;
-                _activeSource = null;
-                _activeConfig = null;
-                Lock(false);
+                await Stop();
                 SetStatus("Não foi possível iniciar", Red, ex.Message);
                 MessageBox.Show(this, ex.Message, "AKTela Capture", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             finally
             {
-                _start.Enabled = true;
+                _start.Enabled = _sharing || _source.Items.Count > 0;
             }
         }
         finally
@@ -535,6 +388,7 @@ internal sealed class MainForm : Form
         await _mediaGate.WaitAsync();
         try
         {
+            if (!_sharing || _activeSource is null) return;
             var next = BuildEffectiveConfig(_activeSource, requested);
             var current = _activeConfig;
             if (current is not null && SameVideoConfig(current, next))
@@ -548,12 +402,15 @@ internal sealed class MainForm : Form
             _outputValue.Text = $"{next.Width}×{next.Height}";
             _relay.UpdateStreamConfig(next);
 
-            if (_relay.ViewerCount > 0 && _relayConnected)
+            if (_relay.ViewerCount > 0 && _relayConnected && _audience.Ready)
             {
                 SetStatus(next.CompatibilityMode ? "Modo compatibilidade" : "Ajustando transmissão", Yellow, reason);
                 _cursor.Stop();
-                await _video.RestartAsync(_activeSource, next);
-                _cursor.Start(_activeSource, () => next.CursorPolicy == "Mostrar");
+                if (_video.IsRunning)
+                {
+                    await _video.RestartAsync(_activeSource, next);
+                    _cursor.Start(_activeSource, () => next.CursorPolicy == "Mostrar");
+                }
             }
             RefreshStatus();
         }
@@ -612,6 +469,7 @@ internal sealed class MainForm : Form
         await _mediaGate.WaitAsync();
         try
         {
+            if (!_sharing || !_relayConnected || _relay.ViewerCount <= 0 || _activeSource is null || _activeConfig is null) return;
             SetStatus("Sincronizando vídeo", Yellow, "Novo quadro-chave solicitado pelo espectador");
             await _video.RestartAsync(_activeSource, _activeConfig);
         }
@@ -669,10 +527,15 @@ internal sealed class MainForm : Form
         _adaptiveTimer.Stop();
         _sharing = false;
         _publisherBlocked = false;
-        _cursor.Stop();
-        await _video.StopAsync();
-        await _audio.StopAsync();
-        await _relay.StopAsync();
+        await _mediaGate.WaitAsync();
+        try
+        {
+            _cursor.Stop();
+            await _video.StopAsync();
+            await _audio.StopAsync();
+            await _relay.StopAsync();
+        }
+        finally { _mediaGate.Release(); }
         _activeSource = null;
         _activeConfig = null;
         _audience = AudienceCapabilities.Default();
@@ -682,7 +545,7 @@ internal sealed class MainForm : Form
         _viewerValue.Text = "0";
         Lock(false);
         _start.Text = "Iniciar transmissão";
-        _start.BackColor = Accent;
+        StyleButton(_start, Accent);
         SetStatus("Pronto", Muted, "Cole o código exibido na Activity");
     }
 
@@ -735,6 +598,7 @@ internal sealed class MainForm : Form
         _status.ForeColor = color;
         _detail.Text = detail;
         _detail.ForeColor = Muted;
+        _statusDot.ForeColor = color;
         UpdateTray();
     }
 
@@ -742,10 +606,13 @@ internal sealed class MainForm : Form
     {
         _code.ReadOnly = locked;
         _code.TabStop = !locked;
-        _paste.Enabled = true;
+        _paste.Enabled = !locked;
+        _refreshSources.Enabled = !locked;
+        foreach (var button in _presetButtons.Values) button.Enabled = !locked;
         _quality.Enabled = !locked;
         _sourceType.Enabled = !locked;
         _source.Enabled = !locked;
+        _audioCheck.Enabled = !locked;
         _audioCheck.AutoCheck = !locked;
         _audioCheck.ForeColor = TextColor;
     }
@@ -769,8 +636,10 @@ internal sealed class MainForm : Form
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Sair", null, async (_, _) =>
         {
+            if (_toggleBusy) return;
             _allowClose = true;
-            if (_sharing) await Stop();
+            _toggleBusy = true;
+            await Stop();
             Close();
         });
         _tray.ContextMenuStrip = menu;
@@ -873,31 +742,17 @@ internal sealed class MainForm : Form
             _adaptiveTimer.Stop();
             _adaptiveTimer.Dispose();
             _tray.Visible = false;
-            _mediaGate.Dispose();
+            _tray.Dispose();
         }
-    }
-
-    private static void AddStat(Control parent, string title, Label value, int x)
-    {
-        parent.Controls.Add(new Label
-        {
-            Text = title,
-            AutoSize = true,
-            ForeColor = Muted,
-            Font = new Font("Segoe UI Variable Text", 7f),
-            Location = new Point(x, 9)
-        });
-        value.AutoSize = true;
-        value.ForeColor = TextColor;
-        value.Font = new Font("Segoe UI Variable Text", 8.5f, FontStyle.Bold);
-        value.Location = new Point(x, 31);
-        parent.Controls.Add(value);
     }
 
     private static string ShortEncoder(string value)
     {
         if (string.IsNullOrWhiteSpace(value)) return "—";
         return value
+            .Replace("NVENC · Desktop Duplication", "NVENC")
+            .Replace("Media Foundation · Desktop Duplication", "Media F.")
+            .Replace("Software H.264", "Software")
             .Replace("NVENC · D3D11 compatível", "NVENC")
             .Replace("NVENC · D3D11", "NVENC")
             .Replace("Media Foundation · D3D11", "Media F.")
@@ -908,62 +763,14 @@ internal sealed class MainForm : Form
             .Replace("Software VP8 · compatibilidade", "VP8");
     }
 
-    private void Label(string text, int x, int y)
-    {
-        Controls.Add(new Label
-        {
-            Text = text,
-            AutoSize = true,
-            Location = new Point(x, y),
-            ForeColor = Muted,
-            Font = new Font("Segoe UI Variable Text", 8f, FontStyle.Bold)
-        });
-    }
-
-    private static void StyleText(TextBox textBox)
-    {
-        textBox.BackColor = Surface2;
-        textBox.ForeColor = TextColor;
-        textBox.BorderStyle = BorderStyle.FixedSingle;
-        textBox.Font = new Font("Segoe UI Variable Text", 10f);
-    }
-
-    private static void StyleCombo(ComboBox combo)
-    {
-        combo.DropDownStyle = ComboBoxStyle.DropDownList;
-        combo.FlatStyle = FlatStyle.Flat;
-        combo.BackColor = Surface2;
-        combo.ForeColor = TextColor;
-        combo.Font = new Font("Segoe UI Variable Text", 9f);
-        combo.DrawMode = DrawMode.OwnerDrawFixed;
-        combo.ItemHeight = 24;
-        combo.DrawItem += (_, e) =>
-        {
-            if (e.Index < 0) return;
-            using var bg = new SolidBrush(Surface2);
-            using var fg = new SolidBrush(TextColor);
-            e.Graphics.FillRectangle(bg, e.Bounds);
-            var text = combo.Items[e.Index]?.ToString() ?? string.Empty;
-            e.Graphics.DrawString(text, combo.Font, fg, e.Bounds.Left + 6, e.Bounds.Top + 3);
-        };
-    }
-
-    private static void StyleButton(Button button, Color color)
-    {
-        button.UseVisualStyleBackColor = false;
-        button.FlatStyle = FlatStyle.Flat;
-        button.FlatAppearance.BorderSize = 0;
-        button.FlatAppearance.MouseOverBackColor = ControlPaint.Light(color, 0.08f);
-        button.FlatAppearance.MouseDownBackColor = ControlPaint.Dark(color, 0.06f);
-        button.BackColor = color;
-        button.ForeColor = TextColor;
-        button.Cursor = Cursors.Hand;
-    }
-
     private void Ui(Action action)
     {
-        if (IsDisposed) return;
-        if (InvokeRequired) BeginInvoke(action);
-        else action();
+        if (IsDisposed || Disposing || !IsHandleCreated) return;
+        try
+        {
+            if (InvokeRequired) BeginInvoke(() => { if (!IsDisposed && !Disposing) action(); });
+            else action();
+        }
+        catch (InvalidOperationException) when (IsDisposed || Disposing || !IsHandleCreated) { }
     }
 }
