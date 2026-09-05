@@ -78,7 +78,7 @@ internal sealed class RelayClient : IAsyncDisposable
         _reconnects = 0;
         Interlocked.Exchange(ref _videoSent, 0);
         Interlocked.Exchange(ref _audioSent, 0);
-        
+
         Interlocked.Exchange(ref _audioDropped, 0);
 
         _videoQueue = new VideoPacketQueue(VideoCapacity);
@@ -449,12 +449,11 @@ internal sealed class RelayClient : IAsyncDisposable
 
     private async Task PingLoop(ClientWebSocket ws, CancellationToken token)
     {
-        var metricTick = 0;
         while (!token.IsCancellationRequested && ws.State == WebSocketState.Open)
         {
             // O relay responde "pong" via WebSocket auto-response, sem acordar o Durable Object.
             QueueControlText("ping");
-            if (ViewerCount > 0 && (++metricTick % 2) == 0)
+            if (ViewerCount > 0)
                 QueueControl(new { type = "ping", sentAt = Environment.TickCount64 });
 
             await Task.Delay(6000, token);

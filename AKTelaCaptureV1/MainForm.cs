@@ -487,8 +487,8 @@ internal sealed partial class MainForm : Form
         var deltaDrops = Math.Max(0, drops - _lastDropSnapshot);
         _lastDropSnapshot = drops;
 
-        var poor = diagnostics.LatencyMs > 520 || deltaDrops >= 8;
-        var stable = diagnostics.LatencyMs > 0 && diagnostics.LatencyMs < 260 && deltaDrops == 0;
+        var poor = diagnostics.LatencyMs > 320 || deltaDrops >= 4;
+        var stable = diagnostics.LatencyMs > 0 && diagnostics.LatencyMs < 180 && deltaDrops == 0;
 
         if (poor)
         {
