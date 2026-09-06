@@ -1,4 +1,4 @@
-# AKTela Capture 2.3.0
+# AKTela Capture 2.3.1
 
 Interface redesenhada e correções de estabilidade para transmissão em tempo real.
 
@@ -7,6 +7,7 @@ Interface redesenhada e correções de estabilidade para transmissão em tempo r
 - O áudio passa a iniciar corretamente depois da negociação de compatibilidade.
 - O cursor remoto desaparece quando fica inativo, acompanhando o comportamento de players em tela cheia.
 - Medição de latência a cada 6 segundos e redução de qualidade mais rápida em rede congestionada.
+- A latência usada na adaptação percorre Capture → espectador → Capture.
 - Proteções contra concorrência ao iniciar, encerrar, reconectar e fechar o aplicativo.
 
 - Remove `scale_d3d11` do caminho padrão por instabilidade em alguns drivers.
