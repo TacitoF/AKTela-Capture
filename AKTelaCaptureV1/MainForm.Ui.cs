@@ -36,7 +36,7 @@ internal sealed partial class MainForm
         title.Controls.Add(Copy("Sua tela, na mesma conversa.", 10, Muted));
         branding.Controls.Add(title);
         header.Controls.Add(branding, 0, 0);
-        var version = Copy("DESKTOP  /  2.3.1", 9, Muted, true);
+        var version = Copy("DESKTOP  /  2.3.2", 9, Muted, true);
         version.Anchor = AnchorStyles.Right;
         header.Controls.Add(version, 1, 0);
         shell.Controls.Add(header, 0, 0);
@@ -83,6 +83,13 @@ internal sealed partial class MainForm
         };
         codeRow.Controls.Add(_paste, 1, 0);
         connection.Controls.Add(codeRow);
+        _codeValidation.AutoSize = true;
+        _codeValidation.Dock = DockStyle.Top;
+        _codeValidation.Font = new Font("Segoe UI", 9, FontStyle.Bold);
+        _codeValidation.Margin = new Padding(0, 7, 0, 0);
+        connection.Controls.Add(_codeValidation);
+        _code.TextChanged += (_, _) => UpdateCodeValidation();
+        UpdateCodeValidation();
         setup.Controls.Add(connection);
 
         var capture = Card("02", "Escolha como compartilhar");
@@ -150,7 +157,7 @@ internal sealed partial class MainForm
         _status.Text = "Pronto para começar";
         _status.AutoSize = true;
         _status.Dock = DockStyle.Top;
-        _status.Font = new Font("Segoe UI", 12, FontStyle.Bold);
+        _status.Font = new Font("Segoe UI", 15, FontStyle.Bold);
         stateLine.Controls.Add(_statusDot, 0, 0);
         stateLine.Controls.Add(_status, 1, 0);
         state.Controls.Add(stateLine);
@@ -231,6 +238,31 @@ internal sealed partial class MainForm
             ? "Nenhuma fonte disponível. Abra uma janela e atualize a lista."
             : $"{source.Width} × {source.Height}  ·  {(source.Kind == SourceKind.Display ? "Monitor inteiro" : "Janela selecionada")}";
         _tips.SetToolTip(_source, source?.Label ?? "Nenhuma fonte disponível");
+    }
+
+    private void UpdateCodeValidation()
+    {
+        var value = RelayClient.Normalize(_code.Text);
+        var valid = RelayClient.IsValidCode(value);
+        if (string.IsNullOrWhiteSpace(_code.Text))
+        {
+            _codeValidation.Text = "Você também pode digitar ou usar Ctrl+V.";
+            _codeValidation.ForeColor = Muted;
+            _code.ForeColor = TextColor;
+        }
+        else if (valid)
+        {
+            _codeValidation.Text = "✓ Código válido — pronto para conectar";
+            _codeValidation.ForeColor = Accent;
+            _code.ForeColor = Accent;
+        }
+        else
+        {
+            _codeValidation.Text = "Use exatamente os 6 caracteres mostrados na Activity.";
+            _codeValidation.ForeColor = Yellow;
+            _code.ForeColor = Yellow;
+        }
+        _code.AccessibleDescription = _codeValidation.Text;
     }
 
     private void UpdatePresetButtons()

@@ -1,4 +1,4 @@
-# AKTela Capture 2.3.1
+# AKTela Capture 2.3.2
 
 Interface redesenhada e correções de estabilidade para transmissão em tempo real.
 
@@ -41,3 +41,7 @@ dotnet run --project tests/AKTelaCapture.SmokeTests/AKTelaCapture.SmokeTests.csp
 Os testes compilam os arquivos reais do capturador, usam o FFmpeg baixado pelo próprio aplicativo e uma fonte de vídeo sintético. Conferem Baseline/Main/High nas quatro qualidades, o SPS real, o envio contínuo até o segundo quadro-chave e a rejeição de perfil ou nível incompatível antes de enviar vídeo. Um executável FFmpeg existente pode ser fornecido após `--`.
 
 Esta verificação não cobre captura do desktop, drivers de GPU, áudio ou uma sessão real do Discord.
+
+- O código da Activity é validado enquanto você digita e aceita Ctrl+V normalmente.
+- O estado AO VIVO e mensagens de erro ganharam maior destaque visual.
+- A release passa a incluir o executável também dentro de um arquivo ZIP.

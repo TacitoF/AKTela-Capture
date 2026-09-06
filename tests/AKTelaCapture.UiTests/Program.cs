@@ -16,9 +16,17 @@ internal static class Program
         var start = Field<Button>(form, "_start");
         var code = Field<TextBox>(form, "_code");
         code.Text = "BAD";
+        Check(Field<Label>(form, "_codeValidation").ForeColor != Color.FromArgb(111, 231, 193),
+            "Código incompleto não deve aparecer como válido");
         start.PerformClick();
         Application.DoEvents();
         Check(Field<Label>(form, "_status").Text == "Confira o código", "Código inválido deve ser rejeitado antes de acessar a rede");
+        code.Text = "ABC234";
+        Check(Field<Label>(form, "_codeValidation").Text.Contains("Código válido"),
+            "Código completo deve receber confirmação visual");
+        code.Text = "A0I234";
+        Check(!Field<Label>(form, "_codeValidation").Text.Contains("Código válido"),
+            "Caracteres ausentes no alfabeto da Activity devem ser rejeitados");
         Invoke(form, "ApplyPreset", "Jogo");
         Check(Field<ComboBox>(form, "_quality").Text.Contains("60 FPS"), "Preset Jogo deve selecionar 60 FPS");
         Invoke(form, "ApplyPreset", "Leve");
