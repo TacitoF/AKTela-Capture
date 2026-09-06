@@ -13,6 +13,7 @@ internal sealed partial class MainForm : Form
     private readonly ComboBox _sourceType = new();
     private readonly ComboBox _source = new();
     private readonly TextBox _code = new();
+    private readonly Label _codeValidation = new();
     private readonly CheckBox _audioCheck = new();
     private readonly Button _start = new();
     private readonly Button _paste = new();
@@ -614,11 +615,16 @@ internal sealed partial class MainForm : Form
 
     private void SetStatus(string text, Color color, string detail)
     {
-        _status.Text = text;
-        _status.ForeColor = color;
+        var live = text.StartsWith("Ao vivo", StringComparison.OrdinalIgnoreCase);
+        _status.Text = live ? $"AO VIVO{text[7..]}" : text;
+        _status.ForeColor = live ? Color.White : color;
+        _status.BackColor = live ? Color.FromArgb(126, 36, 51) : Color.Transparent;
+        _status.Padding = live ? new Padding(8, 4, 8, 4) : Padding.Empty;
         _detail.Text = detail;
-        _detail.ForeColor = Muted;
-        _statusDot.ForeColor = color;
+        _detail.ForeColor = color == Red ? Color.FromArgb(255, 220, 225) : Muted;
+        _detail.BackColor = color == Red ? Color.FromArgb(77, 35, 43) : Color.Transparent;
+        _detail.Padding = color == Red ? new Padding(8, 6, 8, 4) : Padding.Empty;
+        _statusDot.ForeColor = live ? Red : color;
         UpdateTray();
     }
 

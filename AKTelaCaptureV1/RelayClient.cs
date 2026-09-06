@@ -539,7 +539,7 @@ internal sealed class RelayClient : IAsyncDisposable
     }
 
     public static bool IsValidCode(string value) =>
-        System.Text.RegularExpressions.Regex.IsMatch(value, "^[A-Z2-9]{6}$");
+        System.Text.RegularExpressions.Regex.IsMatch(value, "^[A-HJ-NP-Z2-9]{6}$");
 
     public static string Normalize(string value) => new(value.Trim().ToUpperInvariant().Where(char.IsLetterOrDigit).Take(6).ToArray());
 
