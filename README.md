@@ -1,6 +1,10 @@
-# AKTela Capture 2.3.5
+# AKTela Capture 2.4.0
 
 Interface redesenhada e correções de estabilidade para transmissão em tempo real.
+
+- Até três Captures podem transmitir na mesma Activity, cada um ocupando uma tela independente.
+- Quando houver duas ou três telas, o Capture limita automaticamente cada transmissão a 720p e 30 FPS para reduzir banda, CPU e custo no Relay.
+- O status identifica a posição da transmissão (`Tela 1/3`, `Tela 2/3` ou `Tela 3/3`).
 
 - A janela agora se limita automaticamente à área útil do monitor, respeita DPI por monitor e pode ser redimensionada; em telas menores, a configuração continua acessível por rolagem.
 - A exclusão do áudio da chamada prioriza o processo do Discord com sessão de áudio ativa, inclusive quando existem árvores antigas ou múltiplas instâncias.

@@ -35,6 +35,9 @@ internal sealed class RelayClient : IAsyncDisposable
     private int _reconnects;
     private bool _publisherRejected;
     private string _lastError = string.Empty;
+    private int _streamSlot;
+    private int _activeStreams = 1;
+    private string _roomMaxModeKey = "1080p60";
 
     private long _videoSent;
     private long _audioSent;
@@ -54,11 +57,15 @@ internal sealed class RelayClient : IAsyncDisposable
         }
     }
     public long VideoDropped => (_videoQueue?.Dropped ?? 0);
+    public int StreamSlot => Volatile.Read(ref _streamSlot);
+    public int ActiveStreams => Volatile.Read(ref _activeStreams);
+    public string RoomMaxModeKey => _roomMaxModeKey;
 
     public event Action<bool>? ConnectionChanged;
     public event Action<int>? ViewerCountChanged;
     public event Action<long>? LatencyChanged;
     public event Action<AudienceCapabilities>? AudienceCapabilitiesChanged;
+    public event Action<int, int, string>? RoomPolicyChanged;
     public event Action? KeyframeRequested;
     public event Action<string>? PublisherRejected;
     public event Action<string>? Error;
@@ -91,6 +98,9 @@ internal sealed class RelayClient : IAsyncDisposable
         _publisherRejected = false;
         _lastError = string.Empty;
         _reconnects = 0;
+        Interlocked.Exchange(ref _streamSlot, 0);
+        Interlocked.Exchange(ref _activeStreams, 1);
+        _roomMaxModeKey = "1080p60";
         Interlocked.Exchange(ref _videoSent, 0);
         Interlocked.Exchange(ref _audioSent, 0);
         Interlocked.Exchange(ref _lastPingSentAt, 0);
@@ -217,6 +227,9 @@ internal sealed class RelayClient : IAsyncDisposable
         _firstHandshake = null;
         _publisherRejected = false;
         IsConnected = false;
+        Interlocked.Exchange(ref _streamSlot, 0);
+        Interlocked.Exchange(ref _activeStreams, 1);
+        _roomMaxModeKey = "1080p60";
         Interlocked.Exchange(ref _viewers, 0);
         Interlocked.Exchange(ref _latency, 0);
         Interlocked.Exchange(ref _viewerLatency, 0);
@@ -400,6 +413,12 @@ internal sealed class RelayClient : IAsyncDisposable
                 switch (type)
                 {
                     case "publisher-accepted":
+                        if (root.TryGetProperty("slot", out var acceptedSlot) && acceptedSlot.TryGetInt32(out var slot))
+                            Interlocked.Exchange(ref _streamSlot, Math.Clamp(slot, 1, 3));
+                        if (root.TryGetProperty("activeStreams", out var acceptedActive) && acceptedActive.TryGetInt32(out var activeCount))
+                            Interlocked.Exchange(ref _activeStreams, Math.Clamp(activeCount, 1, 3));
+                        if (root.TryGetProperty("maxModeKey", out var acceptedMode))
+                            _roomMaxModeKey = acceptedMode.GetString() ?? "1080p60";
                         _lastPongAt = Environment.TickCount64;
                         if (!IsConnected)
                         {
@@ -410,11 +429,26 @@ internal sealed class RelayClient : IAsyncDisposable
                         QueueStreamConfig();
                         break;
 
+                    case "room-policy":
+                    {
+                        var activeStreams = root.TryGetProperty("activeStreams", out var active) && active.TryGetInt32(out var count)
+                            ? Math.Clamp(count, 1, 3)
+                            : 1;
+                        var maxStreams = root.TryGetProperty("maxStreams", out var maximum) && maximum.TryGetInt32(out var max)
+                            ? Math.Clamp(max, 1, 3)
+                            : 3;
+                        var maxModeKey = root.TryGetProperty("maxModeKey", out var mode) ? mode.GetString() ?? "1080p60" : "1080p60";
+                        Interlocked.Exchange(ref _activeStreams, activeStreams);
+                        _roomMaxModeKey = maxModeKey;
+                        RoomPolicyChanged?.Invoke(activeStreams, maxStreams, maxModeKey);
+                        break;
+                    }
+
                     case "publisher-rejected":
                     {
-                        var message = root.TryGetProperty("message", out var m) ? m.GetString() : "Já existe uma transmissão ativa nesta Activity.";
+                        var message = root.TryGetProperty("message", out var m) ? m.GetString() : "Esta Activity já atingiu o limite de transmissões.";
                         _publisherRejected = true;
-                        _lastError = message ?? "Transmissor já ativo.";
+                        _lastError = message ?? "Limite de transmissões atingido.";
                         PublisherRejected?.Invoke(_lastError);
                         _firstHandshake?.TrySetException(new InvalidOperationException(_lastError));
                         return;
