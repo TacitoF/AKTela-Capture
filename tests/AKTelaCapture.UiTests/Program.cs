@@ -12,12 +12,28 @@ internal static class Program
         form.Show();
         Application.DoEvents();
         Check(form.Height > form.Width, "A janela principal deve preservar a identidade vertical");
-        Check(form.FormBorderStyle == FormBorderStyle.FixedSingle,
-            "A janela principal não deve permitir redimensionamento pelo usuário");
-        Check(!form.MaximizeBox, "A janela vertical não deve oferecer maximização");
-        Check(form.SizeGripStyle == SizeGripStyle.Hide, "A alça de redimensionamento deve ficar oculta");
+        Check(form.FormBorderStyle == FormBorderStyle.Sizable,
+            "A janela principal deve permitir redimensionamento pelo usuário");
+        Check(form.MaximizeBox, "A janela deve oferecer maximização em telas menores");
+        Check(form.SizeGripStyle == SizeGripStyle.Show, "A alça de redimensionamento deve ficar visível");
+        Check(form.Bounds.Width <= Screen.FromControl(form).WorkingArea.Width &&
+              form.Bounds.Height <= Screen.FromControl(form).WorkingArea.Height,
+            "A janela inicial deve caber na área útil do monitor");
+        var fitted = (Rectangle)InvokeStatic(type, "FitBoundsToWorkingArea",
+            new Rectangle(100, 50, 1280, 720), new Size(840, 1300))!;
+        Check(fitted.Left >= 100 && fitted.Top >= 50 && fitted.Right <= 1380 && fitted.Bottom <= 770,
+            "O cálculo responsivo deve manter toda a janela dentro do monitor");
+        var processHelper = type.Assembly.GetType("AKTelaCapture.ProcessTreeHelper", true)!;
+        var selectedRoot = (int?)InvokeStatic(processHelper, "SelectRootProcessId",
+            new[] { 1, 2, 3, 10, 11 },
+            new Dictionary<int, int> { [2] = 1, [3] = 1, [11] = 10 },
+            new[] { 11 });
+        Check(selectedRoot == 10, "A árvore do Discord com áudio ativo deve ter prioridade");
         Directory.CreateDirectory("ui-captures");
         Capture(form, "desktop");
+        form.Size = new Size(460, 620);
+        Application.DoEvents();
+        Capture(form, "compact");
         var start = Field<Button>(form, "_start");
         var code = Field<TextBox>(form, "_code");
         code.Text = "BAD";
@@ -41,7 +57,7 @@ internal static class Program
         Invoke(form, "Lock", false);
         type.GetField("_allowClose", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(form, true);
         form.Close();
-        Console.WriteLine("PASS UI: janela retrato fixa, código inválido, presets e bloqueio.");
+        Console.WriteLine("PASS UI: janela adaptável, código inválido, presets e bloqueio.");
     }
 
     private static void Capture(Form form, string name)
@@ -57,5 +73,7 @@ internal static class Program
 
     private static T Field<T>(Form form, string name) => (T)form.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
     private static void Invoke(Form form, string name, params object[] args) => form.GetType().GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, args);
+    private static object? InvokeStatic(Type type, string name, params object[] args) =>
+        type.GetMethod(name, BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, args);
     private static void Check(bool valid, string message) { if (!valid) throw new Exception(message); }
 }

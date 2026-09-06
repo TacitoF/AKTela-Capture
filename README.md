@@ -1,6 +1,9 @@
-# AKTela Capture 2.3.4
+# AKTela Capture 2.3.5
 
 Interface redesenhada e correções de estabilidade para transmissão em tempo real.
+
+- A janela agora se limita automaticamente à área útil do monitor, respeita DPI por monitor e pode ser redimensionada; em telas menores, a configuração continua acessível por rolagem.
+- A exclusão do áudio da chamada prioriza o processo do Discord com sessão de áudio ativa, inclusive quando existem árvores antigas ou múltiplas instâncias.
 
 - Novo layout responsivo, com fluxo de configuração mais claro, estados legíveis e diagnóstico na tela principal.
 - A fila de vídeo agora preserva a dependência entre quadros: após congestionamento, aguarda um novo quadro-chave em vez de enviar deltas inválidos.
@@ -47,4 +50,4 @@ Esta verificação não cobre captura do desktop, drivers de GPU, áudio ou uma 
 - A release passa a incluir o executável também dentro de um arquivo ZIP.
 
 - Corrige o byte de versão dos pacotes para AKV5; o Relay deixa de descartar os quadros.
-- Consolida a janela vertical em 560 × 860, sem maximização ou redimensionamento acidental.
+- Mantém o formato vertical preferencial de 560 × 860 sem ultrapassar a resolução disponível.
