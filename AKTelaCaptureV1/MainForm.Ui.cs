@@ -36,7 +36,7 @@ internal sealed partial class MainForm
         title.Controls.Add(Copy("Sua tela, na mesma conversa.", 10, Muted));
         branding.Controls.Add(title);
         header.Controls.Add(branding, 0, 0);
-        var version = Copy("DESKTOP  /  2.3.3", 9, Muted, true);
+        var version = Copy("DESKTOP  /  2.3.4", 9, Muted, true);
         version.Anchor = AnchorStyles.Right;
         header.Controls.Add(version, 1, 0);
         shell.Controls.Add(header, 0, 0);
