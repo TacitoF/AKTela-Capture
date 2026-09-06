@@ -139,6 +139,10 @@ internal sealed partial class MainForm : Form
         });
 
         _relay.KeyframeRequested += () => Ui(() => _ = RestartForKeyframe());
+        // Antes, uma rajada de descartes só era percebida no próximo tick do timer de
+        // 5s, deixando a imagem travada em quem assistia até lá. Reagir no próprio
+        // evento de congestionamento reduz a qualidade quase imediatamente.
+        _relay.VideoCongested += () => Ui(() => _ = OnVideoCongested());
 
         _relay.PublisherRejected += message => Ui(() =>
         {
@@ -479,6 +483,19 @@ internal sealed partial class MainForm : Form
         }
     }
 
+    private long _lastCongestionReactAt;
+
+    private async Task OnVideoCongested()
+    {
+        // Uma única rajada de rede derruba vários pacotes de uma vez (fila inteira +
+        // o novo quadro); sem esse limite, cada descarte da mesma rajada dispararia
+        // uma reavaliação/reinício de qualidade redundante.
+        var now = Environment.TickCount64;
+        if (now - _lastCongestionReactAt < 1000) return;
+        _lastCongestionReactAt = now;
+        await EvaluateAdaptiveQuality();
+    }
+
     private async Task EvaluateAdaptiveQuality()
     {
         if (!_sharing || _relay.ViewerCount <= 0 || _quality.SelectedItem is not QualityOption requested) return;
@@ -487,7 +504,10 @@ internal sealed partial class MainForm : Form
         var deltaDrops = Math.Max(0, drops - _lastDropSnapshot);
         _lastDropSnapshot = drops;
 
-        var poor = diagnostics.LatencyMs > 320 || deltaDrops >= 4;
+        // Limiar reduzido de 4 para 2: com a reação imediata ao evento de
+        // congestionamento, uma única rajada (fila cheia = capacidade + 1 descartes)
+        // já deve ser suficiente para acionar a queda de qualidade.
+        var poor = diagnostics.LatencyMs > 320 || deltaDrops >= 2;
         var stable = diagnostics.LatencyMs > 0 && diagnostics.LatencyMs < 180 && deltaDrops == 0;
 
         if (poor)
