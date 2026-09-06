@@ -36,22 +36,23 @@ internal sealed partial class MainForm
         title.Controls.Add(Copy("Sua tela, na mesma conversa.", 10, Muted));
         branding.Controls.Add(title);
         header.Controls.Add(branding, 0, 0);
-        var version = Copy("DESKTOP  /  2.3.2", 9, Muted, true);
+        var version = Copy("DESKTOP  /  2.3.3", 9, Muted, true);
         version.Anchor = AnchorStyles.Right;
         header.Controls.Add(version, 1, 0);
         shell.Controls.Add(header, 0, 0);
 
         var scroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true, Margin = Padding.Empty };
-        var body = Grid(2, 62, 38);
+        var body = Stack();
         body.Dock = DockStyle.Top;
         body.Padding = new Padding(0, 0, 4, 0);
         var setup = Stack();
         setup.Dock = DockStyle.Fill;
-        setup.Margin = new Padding(0, 0, 18, 0);
+        setup.Margin = Padding.Empty;
         var overview = Stack();
         overview.Dock = DockStyle.Fill;
-        body.Controls.Add(setup, 0, 0);
-        body.Controls.Add(overview, 1, 0);
+        overview.Margin = Padding.Empty;
+        body.Controls.Add(setup);
+        body.Controls.Add(overview);
         scroll.Controls.Add(body);
         shell.Controls.Add(scroll, 0, 1);
 

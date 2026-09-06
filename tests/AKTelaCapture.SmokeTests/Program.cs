@@ -5,6 +5,8 @@ using AKTelaCapture;
 // Exercise overflow with real AKV5 packets: never emit a dependent delta after loss.
 var queue = new VideoPacketQueue(2);
 byte[] Packet(bool key) => PacketProtocol.Create(MediaKind.Video, key, 0, 33333, new byte[] { 1 });
+var protocolPacket = Packet(true);
+Check(protocolPacket[4] == 5, "Pacote incompatível com o protocolo AKV5 aceito pelo Relay/Activity");
 Check(!queue.TryWrite(Packet(false)), "Delta aceito antes do primeiro IDR");
 var idr = Packet(true);
 Check(queue.TryWrite(idr) && queue.TryWrite(Packet(false)), "Fila não aceitou GOP inicial");
