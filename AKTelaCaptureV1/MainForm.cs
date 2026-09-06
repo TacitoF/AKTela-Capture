@@ -48,6 +48,9 @@ internal sealed partial class MainForm : Form
     private string _preset = "Leve";
     private AudienceCapabilities _audience = AudienceCapabilities.Default();
     private string _networkCapKey = "1080p60";
+    private string _roomCapKey = "1080p60";
+    private int _streamSlot;
+    private int _activeStreams = 1;
     private long _lastDropSnapshot;
     private int _stableTicks;
     private long _lastKeyframeRestartAt;
@@ -171,6 +174,14 @@ internal sealed partial class MainForm : Form
             if (_sharing && caps.Viewers > 0 && caps.Ready) _ = NegotiateAndSync(caps.Viewers);
         });
 
+        _relay.RoomPolicyChanged += (activeStreams, maxStreams, maxModeKey) => Ui(() =>
+        {
+            _activeStreams = activeStreams;
+            _roomCapKey = maxModeKey;
+            RefreshStatus();
+            if (_sharing) _ = ApplyEffectiveConfig("limite automático para múltiplas telas");
+        });
+
         _relay.KeyframeRequested += () => Ui(() => _ = RestartForKeyframe());
         // Antes, uma rajada de descartes só era percebida no próximo tick do timer de
         // 5s, deixando a imagem travada em quem assistia até lá. Reagir no próprio
@@ -180,7 +191,7 @@ internal sealed partial class MainForm : Form
         _relay.PublisherRejected += message => Ui(() =>
         {
             _publisherBlocked = true;
-            SetStatus("Transmissão já em uso", Red, message);
+            SetStatus("Limite de telas atingido", Red, message);
         });
 
         _relay.Error += msg => Ui(() =>
@@ -282,7 +293,7 @@ internal sealed partial class MainForm : Form
     {
         var requestedKey = requested.Key;
         var audienceKey = _audience.Viewers > 0 ? _audience.ModeKey : requestedKey;
-        var effectiveKey = QualityOption.Min(QualityOption.Min(requestedKey, audienceKey), _networkCapKey);
+        var effectiveKey = QualityOption.Min(QualityOption.Min(QualityOption.Min(requestedKey, audienceKey), _networkCapKey), _roomCapKey);
 
         var codec = _audience.Viewers > 0 ? _audience.VideoCodec : "h264";
         var profile = _audience.Viewers > 0 ? _audience.VideoProfile : "main";
@@ -334,6 +345,9 @@ internal sealed partial class MainForm : Form
             _publisherBlocked = false;
             _audience = AudienceCapabilities.Default();
             _networkCapKey = requested.Key;
+            _roomCapKey = "1080p60";
+            _streamSlot = 0;
+            _activeStreams = 1;
             _stableTicks = 0;
             _lastDropSnapshot = 0;
 
@@ -387,6 +401,12 @@ internal sealed partial class MainForm : Form
 
                 SetStatus("Conectando ao relay", Yellow, "Reservando esta Activity para um transmissor");
                 await _relay.StartAsync(code, initial);
+
+                _streamSlot = _relay.StreamSlot;
+                _activeStreams = _relay.ActiveStreams;
+                _roomCapKey = _relay.RoomMaxModeKey;
+                initial = BuildEffectiveConfig(source, requested);
+                _relay.UpdateStreamConfig(initial);
 
                 _sharing = true;
                 _activeSource = source;
@@ -592,6 +612,9 @@ internal sealed partial class MainForm : Form
         _activeSource = null;
         _activeConfig = null;
         _audience = AudienceCapabilities.Default();
+        _roomCapKey = "1080p60";
+        _streamSlot = 0;
+        _activeStreams = 1;
         _outputValue.Text = "—";
         _fpsValue.Text = "—";
         _encoderValue.Text = "—";
@@ -616,7 +639,7 @@ internal sealed partial class MainForm : Form
         }
         if (_relay.ViewerCount == 0)
         {
-            SetStatus("Ligado · aguardando espectador", Green, $"Relay conectado · {_relay.LatencyMs} ms");
+            SetStatus("Ligado · aguardando espectador", Green, CurrentDetail());
             return;
         }
         if (!_audience.Ready)
@@ -638,6 +661,8 @@ internal sealed partial class MainForm : Form
     private string CurrentDetail()
     {
         var details = new List<string>();
+        if (_streamSlot > 0) details.Add($"Tela {_streamSlot}/3");
+        if (_activeStreams > 1) details.Add($"{_activeStreams} telas · modo leve");
         if (_activeConfig is not null) details.Add(_activeConfig.ModeLabel);
         if (_activeConfig is not null) details.Add(_activeConfig.VideoCodec == "vp8" ? "VP8" : $"H.264 {_activeConfig.VideoProfile}");
         if (_encoderValue.Text is not "—" and not "") details.Add(_encoderValue.Text);
