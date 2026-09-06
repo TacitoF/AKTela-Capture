@@ -74,11 +74,13 @@ internal sealed partial class MainForm : Form
         AutoScaleMode = AutoScaleMode.Dpi;
         AutoScaleDimensions = new SizeF(96, 96);
         // Painel de controle compacto: o formato retrato é parte da identidade.
-        // O conteúdo interno permanece rolável para DPI alto e telas menores.
+        // A janela é limitada à área útil do monitor e pode ser redimensionada;
+        // o conteúdo central permanece rolável em telas menores ou DPI alto.
         ClientSize = new Size(560, 860);
-        FormBorderStyle = FormBorderStyle.FixedSingle;
-        MaximizeBox = false;
-        SizeGripStyle = SizeGripStyle.Hide;
+        FormBorderStyle = FormBorderStyle.Sizable;
+        MaximizeBox = true;
+        MinimumSize = new Size(440, 540);
+        SizeGripStyle = SizeGripStyle.Show;
         DoubleBuffered = true;
         StartPosition = FormStartPosition.CenterScreen;
 
@@ -89,6 +91,33 @@ internal sealed partial class MainForm : Form
 
         _adaptiveTimer.Tick += async (_, _) => await EvaluateAdaptiveQuality();
         FormClosing += OnClosing;
+        Shown += (_, _) => FitWindowToWorkingArea();
+        DpiChanged += (_, _) => BeginInvoke((Action)FitWindowToWorkingArea);
+    }
+
+    private void FitWindowToWorkingArea()
+    {
+        if (IsDisposed || Disposing) return;
+        var workingArea = Screen.FromControl(this).WorkingArea;
+        var dpiScale = Math.Max(1f, DeviceDpi / 96f);
+        var nonClientWidth = Math.Max(0, Width - ClientSize.Width);
+        var nonClientHeight = Math.Max(0, Height - ClientSize.Height);
+        var preferredSize = new Size(
+            Math.Max(Width, (int)Math.Ceiling(560 * dpiScale) + nonClientWidth),
+            Math.Max(Height, (int)Math.Ceiling(860 * dpiScale) + nonClientHeight));
+        Bounds = FitBoundsToWorkingArea(workingArea, preferredSize);
+    }
+
+    internal static Rectangle FitBoundsToWorkingArea(Rectangle workingArea, Size requestedSize)
+    {
+        const int edgeGap = 12;
+        var availableWidth = Math.Max(1, workingArea.Width - edgeGap * 2);
+        var availableHeight = Math.Max(1, workingArea.Height - edgeGap * 2);
+        var width = Math.Min(Math.Max(1, requestedSize.Width), availableWidth);
+        var height = Math.Min(Math.Max(1, requestedSize.Height), availableHeight);
+        var x = workingArea.Left + Math.Max(edgeGap, (workingArea.Width - width) / 2);
+        var y = workingArea.Top + Math.Max(edgeGap, (workingArea.Height - height) / 2);
+        return new Rectangle(x, y, width, height);
     }
 
     private void ApplyPreset(string preset)
@@ -754,6 +783,7 @@ internal sealed partial class MainForm : Form
     {
         if (!Visible) Show();
         WindowState = FormWindowState.Normal;
+        Bounds = FitBoundsToWorkingArea(Screen.FromControl(this).WorkingArea, Bounds.Size);
         Activate();
         BringToFront();
     }

@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using NAudio.CoreAudioApi;
+using NAudio.CoreAudioApi.Interfaces;
 
 namespace AKTelaCapture;
 
@@ -11,7 +13,79 @@ internal static class ProcessTreeHelper
         var ids = Process.GetProcesses().Where(p => { try { return names.Contains(p.ProcessName); } catch { return false; } }).Select(p => p.Id).ToHashSet();
         if (ids.Count == 0) return null;
         var parents = Parents();
-        return ids.FirstOrDefault(id => !parents.TryGetValue(id, out var parent) || !ids.Contains(parent));
+        var audioProcesses = FindActiveAudioProcesses(ids);
+        return SelectRootProcessId(ids, parents, audioProcesses);
+    }
+
+    // O Discord usa vários processos Electron e, em algumas atualizações/reinícios,
+    // pode haver mais de uma árvore ao mesmo tempo. Priorizar o PID que possui uma
+    // sessão de áudio ativa evita excluir uma árvore antiga enquanto a chamada real
+    // continua entrando na captura do sistema.
+    private static HashSet<int> FindActiveAudioProcesses(HashSet<int> discordIds)
+    {
+        var active = new HashSet<int>();
+        try
+        {
+            using var enumerator = new MMDeviceEnumerator();
+            using var devices = enumerator.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active);
+            foreach (var device in devices)
+            {
+                using (device)
+                {
+                    var sessions = device.AudioSessionManager.Sessions;
+                    if (sessions is null) continue;
+                    for (var i = 0; i < sessions.Count; i++)
+                    {
+                        using var session = sessions[i];
+                        var pid = (int)session.GetProcessID;
+                        if (discordIds.Contains(pid) && session.State == AudioSessionState.AudioSessionStateActive)
+                            active.Add(pid);
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // A enumeração de sessões é apenas uma preferência. Se um driver não a
+            // oferecer, a seleção estrutural abaixo ainda encontra a árvore principal.
+        }
+        return active;
+    }
+
+    internal static int? SelectRootProcessId(
+        IReadOnlyCollection<int> processIds,
+        IReadOnlyDictionary<int, int> parents,
+        IReadOnlyCollection<int>? preferredProcessIds = null)
+    {
+        if (processIds.Count == 0) return null;
+        var ids = processIds.ToHashSet();
+
+        int RootOf(int pid)
+        {
+            var current = pid;
+            var seen = new HashSet<int>();
+            while (seen.Add(current) && parents.TryGetValue(current, out var parent) && ids.Contains(parent))
+                current = parent;
+            return current;
+        }
+
+        var roots = ids.GroupBy(RootOf).ToDictionary(group => group.Key, group => group.Count());
+        var preferredRoots = (preferredProcessIds ?? Array.Empty<int>())
+            .Where(ids.Contains)
+            .Select(RootOf)
+            .ToHashSet();
+        IEnumerable<int> candidates = preferredRoots.Count > 0 ? preferredRoots : roots.Keys;
+
+        return candidates
+            .OrderByDescending(root => roots.GetValueOrDefault(root))
+            .ThenBy(ProcessStartTime)
+            .First();
+    }
+
+    private static DateTime ProcessStartTime(int pid)
+    {
+        try { using var process = Process.GetProcessById(pid); return process.StartTime; }
+        catch { return DateTime.MaxValue; }
     }
     public static int FindApplicationRootProcessId(int pid)
     {
