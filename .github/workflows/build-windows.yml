@@ -69,7 +69,7 @@ jobs:
       - name: Publicar artefato
         uses: actions/upload-artifact@v6
         with:
-          name: AKTela-Capture-v2.3.3-Windows-x64
+          name: AKTela-Capture-v2.3.4-Windows-x64
           path: publish/AKTela Capture.exe
           if-no-files-found: error
 
@@ -82,7 +82,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v7
         with:
-          name: AKTela-Capture-v2.3.3-Windows-x64
+          name: AKTela-Capture-v2.3.4-Windows-x64
           path: release
       - name: Publicar versão testada
         env:
@@ -92,6 +92,6 @@ jobs:
         run: |
           cd release
           mv 'AKTela Capture.exe' AKTela-Capture.exe
-          zip -9 AKTela-Capture-v2.3.3-Windows-x64.zip AKTela-Capture.exe
-          sha256sum AKTela-Capture.exe AKTela-Capture-v2.3.3-Windows-x64.zip > SHA256SUMS.txt
-          gh release create v2.3.3 AKTela-Capture.exe AKTela-Capture-v2.3.3-Windows-x64.zip SHA256SUMS.txt --target "$COMMIT_SHA" --title 'AKTela Capture 2.3.3' --notes 'Distribuição direta e em ZIP. Melhora o destaque de transmissão e erros, valida o código durante a digitação e acompanha o fallback automático da Activity quando um driver rejeita H.264. Windows x64, independente de instalação do .NET. O FFmpeg é baixado na primeira transmissão. Validado com testes de H.264 e interface Windows; captura real de desktop, GPU e sessão Discord requer teste no computador de destino.'
+          zip -9 AKTela-Capture-v2.3.4-Windows-x64.zip AKTela-Capture.exe
+          sha256sum AKTela-Capture.exe AKTela-Capture-v2.3.4-Windows-x64.zip > SHA256SUMS.txt
+          gh release create v2.3.4 AKTela-Capture.exe AKTela-Capture-v2.3.4-Windows-x64.zip SHA256SUMS.txt --target "$COMMIT_SHA" --title 'AKTela Capture 2.3.4' --notes 'Consolida o Capture como aplicativo vertical: janela retrato fixa de 560 × 860, sem maximização nem redimensionamento acidental, mantendo rolagem interna e o visual da série 2.3. Distribuição direta e em ZIP para Windows x64, independente de instalação do .NET.'
