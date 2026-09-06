@@ -19,7 +19,7 @@ internal static class PacketProtocol
     {
         var packet = new byte[Header + payload.Length];
         packet[0] = (byte)'A'; packet[1] = (byte)'K'; packet[2] = (byte)'V'; packet[3] = (byte)'5';
-        packet[4] = 2;
+        packet[4] = 5;
         packet[5] = (byte)kind;
         packet[6] = keyframe ? (byte)1 : (byte)0;
         packet[7] = 0;

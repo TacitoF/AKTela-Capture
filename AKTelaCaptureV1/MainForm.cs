@@ -73,8 +73,8 @@ internal sealed partial class MainForm : Form
         Font = new Font("Segoe UI", 10f);
         AutoScaleMode = AutoScaleMode.Dpi;
         AutoScaleDimensions = new SizeF(96, 96);
-        ClientSize = new Size(960, 740);
-        MinimumSize = new Size(800, 600);
+        ClientSize = new Size(620, 860);
+        MinimumSize = new Size(560, 720);
         FormBorderStyle = FormBorderStyle.Sizable;
         DoubleBuffered = true;
         StartPosition = FormStartPosition.CenterScreen;

@@ -1,4 +1,4 @@
-# AKTela Capture 2.3.2
+# AKTela Capture 2.3.3
 
 Interface redesenhada e correções de estabilidade para transmissão em tempo real.
 
@@ -45,3 +45,6 @@ Esta verificação não cobre captura do desktop, drivers de GPU, áudio ou uma 
 - O código da Activity é validado enquanto você digita e aceita Ctrl+V normalmente.
 - O estado AO VIVO e mensagens de erro ganharam maior destaque visual.
 - A release passa a incluir o executável também dentro de um arquivo ZIP.
+
+- Corrige o byte de versão dos pacotes para AKV5; o Relay deixa de descartar os quadros.
+- Restaura a janela vertical como parte da identidade visual do Capture.
