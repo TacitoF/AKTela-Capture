@@ -30,6 +30,7 @@ internal sealed class RelayClient : IAsyncDisposable
     private StreamConfig? _config;
     private int _viewers;
     private long _latency;
+    private long _viewerLatency;
     private long _lastPongAt;
     private int _reconnects;
     private bool _publisherRejected;
@@ -44,7 +45,14 @@ internal sealed class RelayClient : IAsyncDisposable
     public bool IsRunning => _task is { IsCompleted: false };
     public bool IsConnected { get; private set; }
     public int ViewerCount => Volatile.Read(ref _viewers);
-    public long LatencyMs => Volatile.Read(ref _latency);
+    public long LatencyMs
+    {
+        get
+        {
+            var viewer = Volatile.Read(ref _viewerLatency);
+            return ViewerCount > 0 && viewer > 0 ? viewer : Volatile.Read(ref _latency);
+        }
+    }
     public long VideoDropped => (_videoQueue?.Dropped ?? 0);
 
     public event Action<bool>? ConnectionChanged;
@@ -211,6 +219,7 @@ internal sealed class RelayClient : IAsyncDisposable
         IsConnected = false;
         Interlocked.Exchange(ref _viewers, 0);
         Interlocked.Exchange(ref _latency, 0);
+        Interlocked.Exchange(ref _viewerLatency, 0);
         ViewerCountChanged?.Invoke(0);
         LatencyChanged?.Invoke(0);
         ConnectionChanged?.Invoke(false);
@@ -415,6 +424,11 @@ internal sealed class RelayClient : IAsyncDisposable
                     {
                         var n = Math.Max(0, c.GetInt32());
                         Interlocked.Exchange(ref _viewers, n);
+                        if (n == 0)
+                        {
+                            Interlocked.Exchange(ref _viewerLatency, 0);
+                            LatencyChanged?.Invoke(LatencyMs);
+                        }
                         ViewerCountChanged?.Invoke(n);
                         PublishDiagnostics();
                         break;
@@ -449,6 +463,18 @@ internal sealed class RelayClient : IAsyncDisposable
                         break;
                     }
 
+                    case "latency-probe-ack" when root.TryGetProperty("sentAt", out var probe) && probe.TryGetInt64(out var probeSent):
+                    {
+                        // Full Capture -> relay -> viewer -> relay -> Capture latency.
+                        // Adaptive quality should follow the experience of the viewer,
+                        // while the plain-text pong remains the edge-relay diagnostic.
+                        var rtt = Math.Max(0, Environment.TickCount64 - probeSent);
+                        Interlocked.Exchange(ref _viewerLatency, rtt);
+                        LatencyChanged?.Invoke(LatencyMs);
+                        PublishDiagnostics();
+                        break;
+                    }
+
                     case "error":
                     {
                         var message = root.TryGetProperty("message", out var e) ? e.GetString() : "Erro no relay.";
@@ -476,6 +502,8 @@ internal sealed class RelayClient : IAsyncDisposable
             // Também usamos o round-trip desse ping de texto como medida de latência (veja ReceiveLoop).
             Interlocked.Exchange(ref _lastPingSentAt, Environment.TickCount64);
             QueueControlText("ping");
+            if (ViewerCount > 0)
+                QueueControl(new { type = "latency-probe", sentAt = Environment.TickCount64 });
 
             await Task.Delay(6000, token);
 
