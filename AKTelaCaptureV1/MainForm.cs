@@ -366,9 +366,9 @@ internal sealed partial class MainForm : Form
                 await RelayClient.CheckHealthAsync();
 
                 SetStatus("Preparando encoder", Yellow, "Teste 2/4 · FFmpeg");
-                if (!File.Exists(FfmpegManager.PathToExe))
+                if (!FfmpegManager.IsCurrent)
                 {
-                    var progress = new Progress<int>(p => Ui(() => SetStatus($"Preparando encoder · {p}%", Yellow, "Primeira execução")));
+                    var progress = new Progress<int>(p => Ui(() => SetStatus($"Preparando encoder · {p}%", Yellow, "Atualizando captura de janelas")));
                     await FfmpegManager.EnsureAsync(progress);
                 }
 

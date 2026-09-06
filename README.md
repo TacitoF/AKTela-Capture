@@ -1,4 +1,4 @@
-# AKTela Capture 2.5.0
+# AKTela Capture 2.6.0
 
 Interface redesenhada e correções de estabilidade para transmissão em tempo real.
 
@@ -7,7 +7,10 @@ Interface redesenhada e correções de estabilidade para transmissão em tempo r
 - O status identifica a posição da transmissão (`Tela 1/3`, `Tela 2/3` ou `Tela 3/3`).
 - O nome editável do transmissor acompanha cada tela na Activity.
 - Vídeo e áudio são agrupados em lotes curtos, reduzindo em cerca de 6 a 9 vezes as mensagens contabilizadas pela Cloudflare.
-- A captura de janela prioriza o `hwnd` selecionado; o recorte do monitor fica apenas como fallback para jogos incompatíveis.
+- A captura de janela usa `gfxcapture`/Windows.Graphics.Capture com o `HWND` selecionado, evitando quadros pretos em jogos e aplicativos acelerados por GPU.
+- Janelas mantêm a proporção original e ficam centralizadas no vídeo, sem corte ou deformação; bordas visíveis são calculadas pelo DWM.
+- O FFmpeg antigo em cache é atualizado automaticamente para uma compilação com suporte ao `gfxcapture`.
+- Desktop Duplication e GDI permanecem como fallbacks, nesta ordem, para máquinas ou aplicativos incompatíveis.
 
 - A janela agora se limita automaticamente à área útil do monitor, respeita DPI por monitor e pode ser redimensionada; em telas menores, a configuração continua acessível por rolagem.
 - A exclusão do áudio da chamada prioriza o processo do Discord com sessão de áudio ativa, inclusive quando existem árvores antigas ou múltiplas instâncias.

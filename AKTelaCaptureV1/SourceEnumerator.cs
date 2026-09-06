@@ -24,7 +24,7 @@ internal static class SourceEnumerator
         var ownPid = Environment.ProcessId;
         EnumWindows((hwnd, _) =>
         {
-            if (!IsWindowVisible(hwnd) || GetWindowTextLength(hwnd) <= 0) return true;
+            if (!IsWindowVisible(hwnd) || IsWindowCloaked(hwnd) || GetWindowTextLength(hwnd) <= 0) return true;
             var title = new StringBuilder(GetWindowTextLength(hwnd) + 1);
             GetWindowText(hwnd, title, title.Capacity);
             var text = title.ToString().Trim(); if (text.Length == 0) return true;
@@ -44,12 +44,28 @@ internal static class SourceEnumerator
     public static bool TryGetBounds(IntPtr hwnd, out Rectangle bounds)
     {
         bounds = Rectangle.Empty;
-        if (!GetClientRect(hwnd, out var rc)) return false;
-        var p = new POINT { X = rc.Left, Y = rc.Top };
-        if (!ClientToScreen(hwnd, ref p)) return false;
-        bounds = new Rectangle(p.X, p.Y, Math.Max(0, rc.Right - rc.Left), Math.Max(0, rc.Bottom - rc.Top));
+
+        // DWM fornece o retângulo realmente visível, sem as bordas invisíveis de
+        // redimensionamento do GetWindowRect. Isso mantém o recorte de fallback e
+        // o cursor alinhados com a janela que o Windows compõe na tela.
+        if (DwmGetWindowAttribute(hwnd, DwmwaExtendedFrameBounds, out var rc, Marshal.SizeOf<RECT>()) != 0 &&
+            !GetWindowRect(hwnd, out rc))
+        {
+            if (!GetClientRect(hwnd, out rc)) return false;
+            var p = new POINT { X = rc.Left, Y = rc.Top };
+            if (!ClientToScreen(hwnd, ref p)) return false;
+            rc.Right = p.X + Math.Max(0, rc.Right - rc.Left);
+            rc.Bottom = p.Y + Math.Max(0, rc.Bottom - rc.Top);
+            rc.Left = p.X;
+            rc.Top = p.Y;
+        }
+
+        bounds = Rectangle.FromLTRB(rc.Left, rc.Top, rc.Right, rc.Bottom);
         return bounds.Width > 0 && bounds.Height > 0;
     }
+
+    private static bool IsWindowCloaked(IntPtr hwnd) =>
+        DwmGetWindowAttribute(hwnd, DwmwaCloaked, out int cloaked, sizeof(int)) == 0 && cloaked != 0;
 
     private static int OutputIndex(Screen screen, int fallback)
     {
@@ -59,6 +75,8 @@ internal static class SourceEnumerator
     }
 
     private delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
+    private const int DwmwaExtendedFrameBounds = 9;
+    private const int DwmwaCloaked = 14;
     [StructLayout(LayoutKind.Sequential)] private struct RECT { public int Left, Top, Right, Bottom; }
     [StructLayout(LayoutKind.Sequential)] private struct POINT { public int X, Y; }
     [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
@@ -67,5 +85,8 @@ internal static class SourceEnumerator
     [DllImport("user32.dll")] private static extern int GetWindowTextLength(IntPtr hwnd);
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
     [DllImport("user32.dll")] private static extern bool GetClientRect(IntPtr hwnd, out RECT rect);
+    [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
     [DllImport("user32.dll")] private static extern bool ClientToScreen(IntPtr hwnd, ref POINT point);
+    [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out RECT value, int size);
+    [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out int value, int size);
 }

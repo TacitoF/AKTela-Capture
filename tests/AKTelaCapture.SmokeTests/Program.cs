@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Reflection;
 using System.Buffers.Binary;
+using System.Drawing;
 using AKTelaCapture;
 
 // Exercise overflow with real AKV5 packets: never emit a dependent delta after loss.
@@ -30,6 +31,31 @@ Console.WriteLine("PASS lote de mídia: vídeo e áudio agrupados em uma mensage
 // leitor de SPS, validação e loop de envio usados pela captura real.
 var ffmpeg = args.Length > 0 ? args[0] : await FfmpegManager.EnsureAsync();
 Console.WriteLine($"FFmpeg: {ffmpeg}");
+Check(await FfmpegManager.SupportsGfxCaptureAsync(ffmpeg),
+    "O FFmpeg publicado não contém o filtro gfxcapture necessário para janelas aceleradas por GPU");
+
+var windowSource = new CaptureSource(
+    SourceKind.Window, "Teste · janela", new Rectangle(40, 60, 1000, 700), 0,
+    new IntPtr(0x1234), 1234, "teste");
+var windowConfig = Config(QualityOption.ByKey("720p30"), "main");
+var gfxProcess = (ProcessStartInfo)Method("BuildGfxX264", BindingFlags.Static)
+    .Invoke(null, new object[] { ffmpeg, windowSource, windowConfig })!;
+var gfxArguments = string.Join("\n", gfxProcess.ArgumentList);
+Check(gfxArguments.Contains("gfxcapture=hwnd=4660", StringComparison.Ordinal),
+    "Captura moderna não recebeu o HWND exato da janela");
+Check(gfxArguments.Contains("resize_mode=scale_aspect", StringComparison.Ordinal) &&
+      gfxArguments.Contains("width=1280:height=720", StringComparison.Ordinal),
+    "Captura de janela não preserva e centraliza a proporção no canvas negociado");
+Check(gfxArguments.Contains("capture_border=1", StringComparison.Ordinal),
+    "Captura moderna e limites visíveis da janela estão inconsistentes");
+
+var gdiProcess = (ProcessStartInfo)Method("BuildGdiX264", BindingFlags.Static)
+    .Invoke(null, new object[] { ffmpeg, windowSource, windowConfig })!;
+var gdiArguments = string.Join("\n", gdiProcess.ArgumentList);
+Check(gdiArguments.Contains("force_original_aspect_ratio=decrease", StringComparison.Ordinal) &&
+      gdiArguments.Contains("pad=1280:720", StringComparison.Ordinal),
+    "Fallback GDI pode deformar ou desalinhar a janela");
+Console.WriteLine("PASS captura de janela: gfxcapture por HWND e proporção centralizada nos fallbacks.");
 
 foreach (var quality in QualityOption.All)
 {

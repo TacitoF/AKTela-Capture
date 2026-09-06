@@ -69,7 +69,7 @@ jobs:
       - name: Publicar artefato
         uses: actions/upload-artifact@v6
         with:
-          name: AKTela-Capture-v2.5.0-Windows-x64
+          name: AKTela-Capture-v2.6.0-Windows-x64
           path: publish/AKTela Capture.exe
           if-no-files-found: error
 
@@ -82,7 +82,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v7
         with:
-          name: AKTela-Capture-v2.5.0-Windows-x64
+          name: AKTela-Capture-v2.6.0-Windows-x64
           path: release
       - name: Publicar versão testada
         env:
@@ -92,6 +92,6 @@ jobs:
         run: |
           cd release
           mv 'AKTela Capture.exe' AKTela-Capture.exe
-          zip -9 AKTela-Capture-v2.5.0-Windows-x64.zip AKTela-Capture.exe
-          sha256sum AKTela-Capture.exe AKTela-Capture-v2.5.0-Windows-x64.zip > SHA256SUMS.txt
-          gh release create v2.5.0 AKTela-Capture.exe AKTela-Capture-v2.5.0-Windows-x64.zip SHA256SUMS.txt --target "$COMMIT_SHA" --title 'AKTela Capture 2.5.0' --notes 'Reduz o consumo gratuito da Cloudflare agrupando vídeo e áudio, identifica cada transmissor, corrige a captura de janela e melhora o fluxo de destaque e volume na Activity.'
+          zip -9 AKTela-Capture-v2.6.0-Windows-x64.zip AKTela-Capture.exe
+          sha256sum AKTela-Capture.exe AKTela-Capture-v2.6.0-Windows-x64.zip > SHA256SUMS.txt
+          gh release create v2.6.0 AKTela-Capture.exe AKTela-Capture-v2.6.0-Windows-x64.zip SHA256SUMS.txt --target "$COMMIT_SHA" --title 'AKTela Capture 2.6.0' --notes 'Corrige telas pretas em jogos e aplicativos acelerados por GPU usando Windows.Graphics.Capture, centraliza janelas sem cortar ou deformar e atualiza automaticamente o FFmpeg necessário.'

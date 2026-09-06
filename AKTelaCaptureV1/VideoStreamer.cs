@@ -143,19 +143,19 @@ internal sealed class VideoStreamer : IAsyncDisposable
 
     private static List<(string Name, ProcessStartInfo Psi)> H264Attempts(string ffmpeg, CaptureSource source, StreamConfig cfg)
     {
-        // Para uma janela, gdigrab com hwnd captura o conteúdo da janela escolhida.
-        // O caminho antigo começava pelo monitor e tentava recortá-lo via Desktop
-        // Duplication; em alguns jogos/drivers o recorte era ignorado e vazava a tela
-        // inteira. DDA permanece como fallback para jogos que bloqueiam captura GDI.
+        // Windows.Graphics.Capture recebe o HWND exato e captura a superfície que o
+        // compositor/GPU apresenta. GDI usa BitBlt e pode produzir quadros pretos em
+        // jogos DirectX, Chromium e outros aplicativos acelerados por hardware.
         if (source.Kind == SourceKind.Window)
         {
             return
             [
-                ("NVENC · janela selecionada", BuildGdiNvenc(ffmpeg, source, cfg)),
-                ("Media Foundation · janela selecionada", BuildGdiMf(ffmpeg, source, cfg)),
-                ("Software H.264 · janela selecionada", BuildGdiX264(ffmpeg, source, cfg)),
+                ("NVENC · captura moderna de janela", BuildGfxNvenc(ffmpeg, source, cfg)),
+                ("Media Foundation · captura moderna de janela", BuildGfxMf(ffmpeg, source, cfg)),
+                ("Software H.264 · captura moderna de janela", BuildGfxX264(ffmpeg, source, cfg)),
                 ("NVENC · recorte de compatibilidade", BuildDdaNvenc(ffmpeg, source, cfg, false)),
-                ("Media Foundation · recorte de compatibilidade", BuildDdaMf(ffmpeg, source, cfg))
+                ("Media Foundation · recorte de compatibilidade", BuildDdaMf(ffmpeg, source, cfg)),
+                ("Software H.264 · compatibilidade GDI", BuildGdiX264(ffmpeg, source, cfg))
             ];
         }
 
@@ -176,8 +176,9 @@ internal sealed class VideoStreamer : IAsyncDisposable
         source.Kind == SourceKind.Window
             ?
             [
-                ("Software VP8 · janela selecionada", BuildGdiVp8(ffmpeg, source, cfg)),
-                ("Software VP8 · recorte de compatibilidade", BuildDdaVp8(ffmpeg, source, cfg))
+                ("Software VP8 · captura moderna de janela", BuildGfxVp8(ffmpeg, source, cfg)),
+                ("Software VP8 · recorte de compatibilidade", BuildDdaVp8(ffmpeg, source, cfg)),
+                ("Software VP8 · compatibilidade GDI", BuildGdiVp8(ffmpeg, source, cfg))
             ]
             :
             [
@@ -427,6 +428,27 @@ internal sealed class VideoStreamer : IAsyncDisposable
 
     private static int Even(int value) => Math.Max(2, value & ~1);
 
+    private static string ScaleToCanvas(StreamConfig cfg, string pixelFormat)
+    {
+        var width = Even(cfg.Width);
+        var height = Even(cfg.Height);
+        return $"scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=fast_bilinear," +
+               $"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,format={pixelFormat}";
+    }
+
+    private static void GfxInput(ProcessStartInfo p, CaptureSource src, StreamConfig cfg, string pixelFormat)
+    {
+        var hwnd = unchecked((ulong)src.WindowHandle.ToInt64());
+        var width = Even(cfg.Width);
+        var height = Even(cfg.Height);
+        Add(p,
+            "-hide_banner", "-loglevel", "warning",
+            "-filter_complex",
+            $"gfxcapture=hwnd={hwnd}:capture_cursor=0:capture_border=1:display_border=0:" +
+            $"max_framerate={cfg.Fps}:width={width}:height={height}:resize_mode=scale_aspect," +
+            $"hwdownload,format=bgra,fps={cfg.Fps},setsar=1,format={pixelFormat}");
+    }
+
     private static void DdaInput(ProcessStartInfo p, CaptureSource src, StreamConfig cfg)
     {
         var parts = new List<string>
@@ -602,7 +624,7 @@ internal sealed class VideoStreamer : IAsyncDisposable
         if (gpuScale)
             Add(p, "-vf", $"scale_d3d11=width={Even(cfg.Width)}:height={Even(cfg.Height)}:format=nv12");
         else
-            Add(p, "-vf", $"hwdownload,format=bgra,scale={Even(cfg.Width)}:{Even(cfg.Height)}:flags=fast_bilinear,format=nv12");
+            Add(p, "-vf", $"hwdownload,format=bgra,{ScaleToCanvas(cfg, "nv12")}");
         Nvenc(p, cfg);
         return p;
     }
@@ -611,7 +633,7 @@ internal sealed class VideoStreamer : IAsyncDisposable
     {
         var p = Base(exe);
         DdaInput(p, src, cfg);
-        Add(p, "-vf", $"hwdownload,format=bgra,scale={Even(cfg.Width)}:{Even(cfg.Height)}:flags=fast_bilinear,format=nv12");
+        Add(p, "-vf", $"hwdownload,format=bgra,{ScaleToCanvas(cfg, "nv12")}");
         Mf(p, cfg);
         return p;
     }
@@ -620,7 +642,7 @@ internal sealed class VideoStreamer : IAsyncDisposable
     {
         var p = Base(exe);
         GdiInput(p, src, cfg);
-        Add(p, "-vf", $"scale={Even(cfg.Width)}:{Even(cfg.Height)}:flags=fast_bilinear,format=nv12");
+        Add(p, "-vf", ScaleToCanvas(cfg, "nv12"));
         Nvenc(p, cfg);
         return p;
     }
@@ -629,7 +651,7 @@ internal sealed class VideoStreamer : IAsyncDisposable
     {
         var p = Base(exe);
         GdiInput(p, src, cfg);
-        Add(p, "-vf", $"scale={Even(cfg.Width)}:{Even(cfg.Height)}:flags=fast_bilinear,format=nv12");
+        Add(p, "-vf", ScaleToCanvas(cfg, "nv12"));
         Mf(p, cfg);
         return p;
     }
@@ -638,7 +660,7 @@ internal sealed class VideoStreamer : IAsyncDisposable
     {
         var p = Base(exe);
         GdiInput(p, src, cfg);
-        Add(p, "-vf", $"scale={Even(cfg.Width)}:{Even(cfg.Height)}:flags=fast_bilinear,format=yuv420p");
+        Add(p, "-vf", ScaleToCanvas(cfg, "yuv420p"));
         X264(p, cfg);
         return p;
     }
@@ -647,7 +669,7 @@ internal sealed class VideoStreamer : IAsyncDisposable
     {
         var p = Base(exe);
         DdaInput(p, src, cfg);
-        Add(p, "-vf", $"hwdownload,format=bgra,scale={Even(cfg.Width)}:{Even(cfg.Height)}:flags=fast_bilinear,format=yuv420p");
+        Add(p, "-vf", $"hwdownload,format=bgra,{ScaleToCanvas(cfg, "yuv420p")}");
         Vp8(p, cfg);
         return p;
     }
@@ -656,7 +678,39 @@ internal sealed class VideoStreamer : IAsyncDisposable
     {
         var p = Base(exe);
         GdiInput(p, src, cfg);
-        Add(p, "-vf", $"scale={Even(cfg.Width)}:{Even(cfg.Height)}:flags=fast_bilinear,format=yuv420p");
+        Add(p, "-vf", ScaleToCanvas(cfg, "yuv420p"));
+        Vp8(p, cfg);
+        return p;
+    }
+
+    private static ProcessStartInfo BuildGfxNvenc(string exe, CaptureSource src, StreamConfig cfg)
+    {
+        var p = Base(exe);
+        GfxInput(p, src, cfg, "nv12");
+        Nvenc(p, cfg);
+        return p;
+    }
+
+    private static ProcessStartInfo BuildGfxMf(string exe, CaptureSource src, StreamConfig cfg)
+    {
+        var p = Base(exe);
+        GfxInput(p, src, cfg, "nv12");
+        Mf(p, cfg);
+        return p;
+    }
+
+    private static ProcessStartInfo BuildGfxX264(string exe, CaptureSource src, StreamConfig cfg)
+    {
+        var p = Base(exe);
+        GfxInput(p, src, cfg, "yuv420p");
+        X264(p, cfg);
+        return p;
+    }
+
+    private static ProcessStartInfo BuildGfxVp8(string exe, CaptureSource src, StreamConfig cfg)
+    {
+        var p = Base(exe);
+        GfxInput(p, src, cfg, "yuv420p");
         Vp8(p, cfg);
         return p;
     }
