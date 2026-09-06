@@ -73,9 +73,12 @@ internal sealed partial class MainForm : Form
         Font = new Font("Segoe UI", 10f);
         AutoScaleMode = AutoScaleMode.Dpi;
         AutoScaleDimensions = new SizeF(96, 96);
-        ClientSize = new Size(620, 860);
-        MinimumSize = new Size(560, 720);
-        FormBorderStyle = FormBorderStyle.Sizable;
+        // Painel de controle compacto: o formato retrato é parte da identidade.
+        // O conteúdo interno permanece rolável para DPI alto e telas menores.
+        ClientSize = new Size(560, 860);
+        FormBorderStyle = FormBorderStyle.FixedSingle;
+        MaximizeBox = false;
+        SizeGripStyle = SizeGripStyle.Hide;
         DoubleBuffered = true;
         StartPosition = FormStartPosition.CenterScreen;
 
