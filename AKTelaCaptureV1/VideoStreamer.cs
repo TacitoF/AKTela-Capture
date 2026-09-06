@@ -141,24 +141,49 @@ internal sealed class VideoStreamer : IAsyncDisposable
         catch (Exception ex) { StreamError?.Invoke(ex.Message); }
     }
 
-    private static List<(string Name, ProcessStartInfo Psi)> H264Attempts(string ffmpeg, CaptureSource source, StreamConfig cfg) =>
-    [
+    private static List<(string Name, ProcessStartInfo Psi)> H264Attempts(string ffmpeg, CaptureSource source, StreamConfig cfg)
+    {
+        // Para uma janela, gdigrab com hwnd captura o conteúdo da janela escolhida.
+        // O caminho antigo começava pelo monitor e tentava recortá-lo via Desktop
+        // Duplication; em alguns jogos/drivers o recorte era ignorado e vazava a tela
+        // inteira. DDA permanece como fallback para jogos que bloqueiam captura GDI.
+        if (source.Kind == SourceKind.Window)
+        {
+            return
+            [
+                ("NVENC · janela selecionada", BuildGdiNvenc(ffmpeg, source, cfg)),
+                ("Media Foundation · janela selecionada", BuildGdiMf(ffmpeg, source, cfg)),
+                ("Software H.264 · janela selecionada", BuildGdiX264(ffmpeg, source, cfg)),
+                ("NVENC · recorte de compatibilidade", BuildDdaNvenc(ffmpeg, source, cfg, false)),
+                ("Media Foundation · recorte de compatibilidade", BuildDdaMf(ffmpeg, source, cfg))
+            ];
+        }
+
         // O scale_d3d11 direto foi removido do caminho padrão: alguns drivers/GPUs
         // retornam E_INVALIDARG ao criar a textura de saída. Mantemos Desktop
-        // Duplication para captura, baixamos o frame para memória e usamos NVENC
-        // para codificar por hardware. É um pouco menos zero-copy, mas muito mais estável.
-        ("NVENC · Desktop Duplication", BuildDdaNvenc(ffmpeg, source, cfg, false)),
-        ("NVENC · compatibilidade", BuildGdiNvenc(ffmpeg, source, cfg)),
-        ("Media Foundation · Desktop Duplication", BuildDdaMf(ffmpeg, source, cfg)),
-        ("Media Foundation · compatibilidade", BuildGdiMf(ffmpeg, source, cfg)),
-        ("Software H.264 · compatibilidade", BuildGdiX264(ffmpeg, source, cfg))
-    ];
+        // Duplication para captura, baixamos o frame para memória e usamos NVENC.
+        return
+        [
+            ("NVENC · Desktop Duplication", BuildDdaNvenc(ffmpeg, source, cfg, false)),
+            ("NVENC · compatibilidade", BuildGdiNvenc(ffmpeg, source, cfg)),
+            ("Media Foundation · Desktop Duplication", BuildDdaMf(ffmpeg, source, cfg)),
+            ("Media Foundation · compatibilidade", BuildGdiMf(ffmpeg, source, cfg)),
+            ("Software H.264 · compatibilidade", BuildGdiX264(ffmpeg, source, cfg))
+        ];
+    }
 
     private static List<(string Name, ProcessStartInfo Psi)> Vp8Attempts(string ffmpeg, CaptureSource source, StreamConfig cfg) =>
-    [
-        ("Software VP8 · D3D11", BuildDdaVp8(ffmpeg, source, cfg)),
-        ("Software VP8 · compatibilidade", BuildGdiVp8(ffmpeg, source, cfg))
-    ];
+        source.Kind == SourceKind.Window
+            ?
+            [
+                ("Software VP8 · janela selecionada", BuildGdiVp8(ffmpeg, source, cfg)),
+                ("Software VP8 · recorte de compatibilidade", BuildDdaVp8(ffmpeg, source, cfg))
+            ]
+            :
+            [
+                ("Software VP8 · D3D11", BuildDdaVp8(ffmpeg, source, cfg)),
+                ("Software VP8 · compatibilidade", BuildGdiVp8(ffmpeg, source, cfg))
+            ];
 
     private async Task<(bool Ok, string Error)> RunH264Attempt(string name, ProcessStartInfo psi, StreamConfig cfg, CancellationToken token)
     {

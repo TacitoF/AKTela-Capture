@@ -36,7 +36,7 @@ internal sealed partial class MainForm
         title.Controls.Add(Copy("Sua tela, na mesma conversa.", 10, Muted));
         branding.Controls.Add(title);
         header.Controls.Add(branding, 0, 0);
-        var version = Copy("DESKTOP  /  2.4.0", 9, Muted, true);
+        var version = Copy("DESKTOP  /  2.5.0", 9, Muted, true);
         version.Anchor = AnchorStyles.Right;
         header.Controls.Add(version, 1, 0);
         shell.Controls.Add(header, 0, 0);
@@ -91,6 +91,21 @@ internal sealed partial class MainForm
         connection.Controls.Add(_codeValidation);
         _code.TextChanged += (_, _) => UpdateCodeValidation();
         UpdateCodeValidation();
+
+        var nameLabel = Copy("Nome exibido na transmissão", 10, Muted);
+        nameLabel.Margin = new Padding(0, 14, 0, 5);
+        connection.Controls.Add(nameLabel);
+        _displayName.Dock = DockStyle.Top;
+        _displayName.Height = 40;
+        _displayName.Margin = Padding.Empty;
+        _displayName.BorderStyle = BorderStyle.FixedSingle;
+        _displayName.BackColor = Surface2;
+        _displayName.ForeColor = TextColor;
+        _displayName.Font = new Font("Segoe UI", 10);
+        _displayName.MaxLength = 32;
+        _displayName.PlaceholderText = "Seu nome";
+        _displayName.AccessibleName = "Nome mostrado para quem estiver assistindo";
+        connection.Controls.Add(_displayName);
         setup.Controls.Add(connection);
 
         var capture = Card("02", "Escolha como compartilhar");

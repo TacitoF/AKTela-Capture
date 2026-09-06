@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Reflection;
+using System.Buffers.Binary;
 using AKTelaCapture;
 
 // Exercise overflow with real AKV5 packets: never emit a dependent delta after loss.
@@ -16,6 +17,14 @@ Check(queue.TryWrite(idr) && queue.TryRead(out var resumed) && ReferenceEquals(i
 queue.Reset();
 Check(!queue.TryWrite(Packet(false)), "Reconexão aceitou delta antigo");
 Console.WriteLine("PASS fila de vídeo: início, overflow, recuperação e reconexão.");
+
+var audioPacket = PacketProtocol.Create(MediaKind.Audio, true, 20_000, 20_000, new byte[] { 2 });
+var mediaBatch = PacketProtocol.CreateBatch([idr, audioPacket, Packet(false)]);
+Check(mediaBatch.AsSpan(0, 4).SequenceEqual("AKB1"u8), "Cabeçalho do lote de mídia inválido");
+Check(BinaryPrimitives.ReadUInt16LittleEndian(mediaBatch.AsSpan(6, 2)) == 3, "Quantidade incorreta no lote de mídia");
+var firstLength = BinaryPrimitives.ReadInt32LittleEndian(mediaBatch.AsSpan(PacketProtocol.BatchHeader, 4));
+Check(firstLength == idr.Length, "Tamanho do primeiro pacote do lote inválido");
+Console.WriteLine("PASS lote de mídia: vídeo e áudio agrupados em uma mensagem WebSocket.");
 
 // A fonte sintética dispensa desktop/GPU, mas atravessa os mesmos argumentos,
 // leitor de SPS, validação e loop de envio usados pela captura real.

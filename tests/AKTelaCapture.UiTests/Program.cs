@@ -36,6 +36,8 @@ internal static class Program
         Capture(form, "compact");
         var start = Field<Button>(form, "_start");
         var code = Field<TextBox>(form, "_code");
+        Check(!string.IsNullOrWhiteSpace(Field<TextBox>(form, "_displayName").Text),
+            "Nome do transmissor deve vir preenchido para identificar a tela");
         code.Text = "BAD";
         Check(Field<Label>(form, "_codeValidation").ForeColor != Color.FromArgb(111, 231, 193),
             "Código incompleto não deve aparecer como válido");

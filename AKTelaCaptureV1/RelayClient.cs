@@ -13,8 +13,9 @@ internal sealed class RelayClient : IAsyncDisposable
     // Capacidade 2 (~66ms a 30fps) descartava a fila inteira a qualquer micro-oscilação
     // da rede, forçando espera por um novo quadro-chave (até 1s) e travando a imagem de
     // quem assistia. Um pouco mais de folga absorve jitter sem custar latência perceptível.
-    private const int VideoCapacity = 5;
+    private const int VideoCapacity = 8;
     private const int AudioCapacity = 24;
+    private const int MediaBatchWindowMs = 80;
 
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(4) };
 
@@ -27,6 +28,7 @@ internal sealed class RelayClient : IAsyncDisposable
 
     private string _room = string.Empty;
     private string _publisherId = string.Empty;
+    private string _publisherName = string.Empty;
     private StreamConfig? _config;
     private int _viewers;
     private long _latency;
@@ -83,7 +85,7 @@ internal sealed class RelayClient : IAsyncDisposable
             throw new InvalidOperationException("O relay respondeu, mas o health check não retornou OK.");
     }
 
-    public async Task StartAsync(string room, StreamConfig config)
+    public async Task StartAsync(string room, StreamConfig config, string publisherName)
     {
         if (IsRunning) return;
 
@@ -95,6 +97,7 @@ internal sealed class RelayClient : IAsyncDisposable
 
         _config = config;
         _publisherId = Guid.NewGuid().ToString("N");
+        _publisherName = NormalizeDisplayName(publisherName);
         _publisherRejected = false;
         _lastError = string.Empty;
         _reconnects = 0;
@@ -254,7 +257,7 @@ internal sealed class RelayClient : IAsyncDisposable
                 _videoQueue?.Reset();
                 while (_audioQueue?.Reader.TryRead(out _) == true) { }
                 while (_controlQueue?.Reader.TryRead(out _) == true) { }
-                await ws.ConnectAsync(new Uri($"{RelayWs}?role=publisher&room={Uri.EscapeDataString(_room)}&publisherId={Uri.EscapeDataString(_publisherId)}"), token);
+                await ws.ConnectAsync(new Uri($"{RelayWs}?role=publisher&room={Uri.EscapeDataString(_room)}&publisherId={Uri.EscapeDataString(_publisherId)}&publisherName={Uri.EscapeDataString(_publisherName)}"), token);
                 _lastPongAt = Environment.TickCount64;
 
                 var send = SendLoop(ws, linked.Token);
@@ -331,39 +334,41 @@ internal sealed class RelayClient : IAsyncDisposable
 
         while (!token.IsCancellationRequested && ws.State == WebSocketState.Open)
         {
-            var sentSomething = false;
+            await _sendSignal.WaitAsync(token);
 
             // Controle continua prioritário, mas com limite por ciclo para cursor/pings
             // não impedirem que os quadros de vídeo avancem.
             for (var i = 0; i < 8 && control.Reader.TryRead(out var controlData); i++)
             {
                 await ws.SendAsync(controlData, WebSocketMessageType.Text, true, token);
-                sentSomething = true;
             }
 
-            // Vídeo primeiro: em compartilhamento de tela, um quadro atual é mais útil
-            // do que deixar a fila acumular atraso.
-            if (video.TryRead(out var videoData))
-            {
-                await ws.SendAsync(videoData, WebSocketMessageType.Binary, true, token);
-                Interlocked.Increment(ref _videoSent);
-                if ((Interlocked.Read(ref _videoSent) & 31) == 0) PublishDiagnostics();
-                sentSomething = true;
-            }
+            var media = new List<byte[]>(PacketProtocol.MaxBatchPackets);
+            DrainMedia(video, audio, media);
+            if (media.Count == 0) continue;
 
-            // Ainda enviamos um pacote de áudio por ciclo para evitar starvation.
-            if (audio.Reader.TryRead(out var audioData))
-            {
-                await ws.SendAsync(audioData, WebSocketMessageType.Binary, true, token);
-                Interlocked.Increment(ref _audioSent);
-                sentSomething = true;
-            }
+            // A Cloudflare cobra mensagens WebSocket recebidas pelo Durable Object.
+            // Uma janela curta agrupa vídeo e áudio em uma única mensagem, reduzindo
+            // drasticamente a cota usada sem criar atraso perceptível no player.
+            await Task.Delay(MediaBatchWindowMs, token);
+            DrainMedia(video, audio, media);
+            media.Sort((a, b) => PacketProtocol.TimestampUs(a).CompareTo(PacketProtocol.TimestampUs(b)));
 
-            if (sentSomething) continue;
-
-            // A single bounded wake-up avoids accumulating abandoned channel waiters.
-            await _sendSignal.WaitAsync(token);
+            await ws.SendAsync(PacketProtocol.CreateBatch(media), WebSocketMessageType.Binary, true, token);
+            var videoCount = media.Count(packet => PacketProtocol.Kind(packet) == MediaKind.Video);
+            var audioCount = media.Count - videoCount;
+            Interlocked.Add(ref _videoSent, videoCount);
+            Interlocked.Add(ref _audioSent, audioCount);
+            if ((Interlocked.Read(ref _videoSent) & 31) == 0) PublishDiagnostics();
         }
+    }
+
+    private static void DrainMedia(VideoPacketQueue video, Channel<byte[]> audio, List<byte[]> destination)
+    {
+        while (destination.Count < PacketProtocol.MaxBatchPackets && video.TryRead(out var videoData))
+            destination.Add(videoData);
+        while (destination.Count < PacketProtocol.MaxBatchPackets && audio.Reader.TryRead(out var audioData))
+            destination.Add(audioData);
     }
 
     private async Task ReceiveLoop(ClientWebSocket ws, CancellationToken token)
@@ -576,6 +581,13 @@ internal sealed class RelayClient : IAsyncDisposable
         System.Text.RegularExpressions.Regex.IsMatch(value, "^[A-HJ-NP-Z2-9]{6}$");
 
     public static string Normalize(string value) => new(value.Trim().ToUpperInvariant().Where(char.IsLetterOrDigit).Take(6).ToArray());
+
+    public static string NormalizeDisplayName(string value)
+    {
+        var clean = new string((value ?? string.Empty).Where(c => !char.IsControl(c)).ToArray()).Trim();
+        while (clean.Contains("  ", StringComparison.Ordinal)) clean = clean.Replace("  ", " ", StringComparison.Ordinal);
+        return clean.Length == 0 ? "Transmissor" : clean[..Math.Min(32, clean.Length)];
+    }
 
     public async ValueTask DisposeAsync() => await StopAsync();
 }

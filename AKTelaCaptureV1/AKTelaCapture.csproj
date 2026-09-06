@@ -8,9 +8,9 @@
     <AssemblyName>AKTela Capture</AssemblyName>
     <RootNamespace>AKTelaCapture</RootNamespace>
     <Product>AKTela Capture</Product>
-    <Version>2.4.0</Version>
-    <AssemblyVersion>2.4.0.0</AssemblyVersion>
-    <FileVersion>2.4.0.0</FileVersion>
+    <Version>2.5.0</Version>
+    <AssemblyVersion>2.5.0.0</AssemblyVersion>
+    <FileVersion>2.5.0.0</FileVersion>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ApplicationIcon>Assets\AKTela.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>

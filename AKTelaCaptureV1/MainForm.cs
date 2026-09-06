@@ -13,6 +13,7 @@ internal sealed partial class MainForm : Form
     private readonly ComboBox _sourceType = new();
     private readonly ComboBox _source = new();
     private readonly TextBox _code = new();
+    private readonly TextBox _displayName = new();
     private readonly Label _codeValidation = new();
     private readonly CheckBox _audioCheck = new();
     private readonly Button _start = new();
@@ -88,6 +89,7 @@ internal sealed partial class MainForm : Form
         StartPosition = FormStartPosition.CenterScreen;
 
         BuildUi();
+        _displayName.Text = RelayClient.NormalizeDisplayName(Environment.UserName);
         BuildTray();
         Wire();
         LoadSources();
@@ -400,7 +402,7 @@ internal sealed partial class MainForm : Form
                     _detail.Text = "Discord não detectado para exclusão de áudio; o vídeo continuará normalmente.";
 
                 SetStatus("Conectando ao relay", Yellow, "Reservando esta Activity para um transmissor");
-                await _relay.StartAsync(code, initial);
+                await _relay.StartAsync(code, initial, _displayName.Text);
 
                 _streamSlot = _relay.StreamSlot;
                 _activeStreams = _relay.ActiveStreams;
@@ -695,6 +697,7 @@ internal sealed partial class MainForm : Form
         _quality.Enabled = !locked;
         _sourceType.Enabled = !locked;
         _source.Enabled = !locked;
+        _displayName.Enabled = !locked;
         _audioCheck.Enabled = !locked;
         _audioCheck.AutoCheck = !locked;
         _audioCheck.ForeColor = TextColor;
