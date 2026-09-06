@@ -10,7 +10,10 @@ internal sealed class RelayClient : IAsyncDisposable
 {
     private const string RelayWs = "wss://aktela-relay.tacito1-filho.workers.dev/ws";
     private const string RelayHealth = "https://aktela-relay.tacito1-filho.workers.dev/health";
-    private const int VideoCapacity = 2;
+    // Capacidade 2 (~66ms a 30fps) descartava a fila inteira a qualquer micro-oscilação
+    // da rede, forçando espera por um novo quadro-chave (até 1s) e travando a imagem de
+    // quem assistia. Um pouco mais de folga absorve jitter sem custar latência perceptível.
+    private const int VideoCapacity = 5;
     private const int AudioCapacity = 24;
 
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(4) };
@@ -36,6 +39,7 @@ internal sealed class RelayClient : IAsyncDisposable
     private long _audioSent;
     private readonly SemaphoreSlim _sendSignal = new(0, 1);
     private long _audioDropped;
+    private long _lastPingSentAt;
 
     public bool IsRunning => _task is { IsCompleted: false };
     public bool IsConnected { get; private set; }
@@ -51,6 +55,9 @@ internal sealed class RelayClient : IAsyncDisposable
     public event Action<string>? PublisherRejected;
     public event Action<string>? Error;
     public event Action<RelayDiagnostics>? DiagnosticsChanged;
+    // Disparado a cada quadro delta descartado por congestionamento, para permitir reação
+    // imediata (reduzir qualidade) em vez de esperar o próximo ciclo do timer periódico.
+    public event Action? VideoCongested;
 
     public static async Task CheckHealthAsync(CancellationToken token = default)
     {
@@ -78,6 +85,7 @@ internal sealed class RelayClient : IAsyncDisposable
         _reconnects = 0;
         Interlocked.Exchange(ref _videoSent, 0);
         Interlocked.Exchange(ref _audioSent, 0);
+        Interlocked.Exchange(ref _lastPingSentAt, 0);
 
         Interlocked.Exchange(ref _audioDropped, 0);
 
@@ -138,6 +146,7 @@ internal sealed class RelayClient : IAsyncDisposable
         if (queue is null || !IsConnected) return false;
         var ok = queue.TryWrite(packet);
         if (ok) SignalSender();
+        else VideoCongested?.Invoke();
         PublishDiagnostics();
         return ok;
     }
@@ -357,6 +366,19 @@ internal sealed class RelayClient : IAsyncDisposable
             if (textMessage == "pong")
             {
                 _lastPongAt = Environment.TickCount64;
+                // Este "pong" vem do auto-response do Worker (setWebSocketAutoResponse),
+                // respondido na borda sem acordar o Durable Object nem esperar atrás de
+                // vídeo/controle na fila de mensagens. É a medida mais fiel do RTT real
+                // com o relay, sem o viés de congestionamento que inflava o ping exibido
+                // especificamente durante transmissões ativas.
+                var sentAt = Interlocked.Read(ref _lastPingSentAt);
+                if (sentAt > 0)
+                {
+                    var rtt = Math.Max(0, Environment.TickCount64 - sentAt);
+                    Interlocked.Exchange(ref _latency, rtt);
+                    LatencyChanged?.Invoke(rtt);
+                    PublishDiagnostics();
+                }
                 continue;
             }
 
@@ -420,11 +442,10 @@ internal sealed class RelayClient : IAsyncDisposable
 
                     case "pong" when root.TryGetProperty("sentAt", out var s) && s.TryGetInt64(out var sent):
                     {
+                        // Mantido por compatibilidade com relays antigos; este "pong" passa
+                        // pela fila de processamento do Durable Object e não é mais a fonte
+                        // usada para o latência exibida (veja o "pong" de texto puro acima).
                         _lastPongAt = Environment.TickCount64;
-                        var l = Math.Max(0, Environment.TickCount64 - sent);
-                        Interlocked.Exchange(ref _latency, l);
-                        LatencyChanged?.Invoke(l);
-                        PublishDiagnostics();
                         break;
                     }
 
@@ -452,9 +473,9 @@ internal sealed class RelayClient : IAsyncDisposable
         while (!token.IsCancellationRequested && ws.State == WebSocketState.Open)
         {
             // O relay responde "pong" via WebSocket auto-response, sem acordar o Durable Object.
+            // Também usamos o round-trip desse ping de texto como medida de latência (veja ReceiveLoop).
+            Interlocked.Exchange(ref _lastPingSentAt, Environment.TickCount64);
             QueueControlText("ping");
-            if (ViewerCount > 0)
-                QueueControl(new { type = "ping", sentAt = Environment.TickCount64 });
 
             await Task.Delay(6000, token);
 
