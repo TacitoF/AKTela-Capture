@@ -174,7 +174,7 @@ internal sealed partial class MainForm : Form
             if (_sharing && caps.Viewers > 0 && caps.Ready) _ = NegotiateAndSync(caps.Viewers);
         });
 
-        _relay.RoomPolicyChanged += (activeStreams, _, maxModeKey) => Ui(() =>
+        _relay.RoomPolicyChanged += (activeStreams, maxStreams, maxModeKey) => Ui(() =>
         {
             _activeStreams = activeStreams;
             _roomCapKey = maxModeKey;
