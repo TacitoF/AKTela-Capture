@@ -1,4 +1,4 @@
-# AKTela Capture 2.3.3
+# AKTela Capture 2.3.4
 
 Interface redesenhada e correções de estabilidade para transmissão em tempo real.
 
@@ -47,4 +47,4 @@ Esta verificação não cobre captura do desktop, drivers de GPU, áudio ou uma 
 - A release passa a incluir o executável também dentro de um arquivo ZIP.
 
 - Corrige o byte de versão dos pacotes para AKV5; o Relay deixa de descartar os quadros.
-- Restaura a janela vertical como parte da identidade visual do Capture.
+- Consolida a janela vertical em 560 × 860, sem maximização ou redimensionamento acidental.
