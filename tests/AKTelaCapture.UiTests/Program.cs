@@ -12,6 +12,10 @@ internal static class Program
         form.Show();
         Application.DoEvents();
         Check(form.Height > form.Width, "A janela principal deve preservar a identidade vertical");
+        Check(form.FormBorderStyle == FormBorderStyle.FixedSingle,
+            "A janela principal não deve permitir redimensionamento pelo usuário");
+        Check(!form.MaximizeBox, "A janela vertical não deve oferecer maximização");
+        Check(form.SizeGripStyle == SizeGripStyle.Hide, "A alça de redimensionamento deve ficar oculta");
         Directory.CreateDirectory("ui-captures");
         Capture(form, "desktop");
         var start = Field<Button>(form, "_start");
@@ -35,12 +39,9 @@ internal static class Program
         Check(!Field<Button>(form, "_paste").Enabled && !Field<Button>(form, "_refreshSources").Enabled,
             "Configuração bloqueada deve desabilitar Colar e Atualizar");
         Invoke(form, "Lock", false);
-        form.ClientSize = new Size(560, 720);
-        Application.DoEvents();
-        Capture(form, "compact");
         type.GetField("_allowClose", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(form, true);
         form.Close();
-        Console.WriteLine("PASS UI: código inválido, presets, bloqueio e layouts desktop/compacto.");
+        Console.WriteLine("PASS UI: janela retrato fixa, código inválido, presets e bloqueio.");
     }
 
     private static void Capture(Form form, string name)
