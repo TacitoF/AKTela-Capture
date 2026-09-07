@@ -2,6 +2,9 @@
 
 Interface redesenhada e correções de estabilidade para transmissão em tempo real.
 
+- O relógio do áudio agora avança pelas amostras codificadas, evitando sobreposição quando os pacotes são processados em rajadas.
+- A fila de envio preserva somente o áudio recente durante congestionamentos, mantendo o vídeo como prioridade e evitando som atrasado.
+
 - Até três Captures podem transmitir na mesma Activity, cada um ocupando uma tela independente.
 - Quando houver duas ou três telas, o Capture limita automaticamente cada transmissão a 720p e 30 FPS para reduzir banda, CPU e custo no Relay.
 - O status identifica a posição da transmissão (`Tela 1/3`, `Tela 2/3` ou `Tela 3/3`).

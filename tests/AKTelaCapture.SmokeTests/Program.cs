@@ -27,6 +27,18 @@ var firstLength = BinaryPrimitives.ReadInt32LittleEndian(mediaBatch.AsSpan(Packe
 Check(firstLength == idr.Length, "Tamanho do primeiro pacote do lote inválido");
 Console.WriteLine("PASS lote de mídia: vídeo e áudio agrupados em uma mensagem WebSocket.");
 
+// Uma rajada processada no mesmo instante ainda precisa representar três blocos
+// consecutivos de 20 ms; timestamps baseados no relógio do encoder causavam sobreposição.
+var audioClock = new FixedFrameTimestampClock();
+var audioTs1 = audioClock.Next(1_000_000, 20_000);
+var audioTs2 = audioClock.Next(1_000_100, 20_000);
+var audioTs3 = audioClock.Next(1_000_200, 20_000);
+Check(audioTs1 == 1_000_000 && audioTs2 == 1_020_000 && audioTs3 == 1_040_000,
+    "Relógio de áudio comprimiu blocos processados em rajada");
+audioClock.Reset();
+Check(audioClock.Next(2_000_000, 20_000) == 2_000_000, "Relógio de áudio não reiniciou");
+Console.WriteLine("PASS relógio de áudio: duração contínua e reinício.");
+
 // A fonte sintética dispensa desktop/GPU, mas atravessa os mesmos argumentos,
 // leitor de SPS, validação e loop de envio usados pela captura real.
 var ffmpeg = args.Length > 0 ? args[0] : await FfmpegManager.EnsureAsync();

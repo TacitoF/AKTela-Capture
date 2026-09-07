@@ -11,6 +11,24 @@ internal static class MediaClock
     public static long NowMicroseconds() => (long)((Stopwatch.GetTimestamp() - Start) * 1_000_000d / Stopwatch.Frequency);
 }
 
+// Mantém o tempo da mídia baseado na quantidade de amostras, não na velocidade
+// momentânea do encoder. Se vários blocos forem processados juntos após uma oscilação,
+// eles continuam separados pela duração real em vez de receber timestamps quase iguais.
+internal sealed class FixedFrameTimestampClock
+{
+    private long? _nextTimestampUs;
+
+    public long Next(long nowUs, int durationUs)
+    {
+        if (durationUs <= 0) throw new ArgumentOutOfRangeException(nameof(durationUs));
+        var timestamp = _nextTimestampUs ?? nowUs;
+        _nextTimestampUs = timestamp + durationUs;
+        return timestamp;
+    }
+
+    public void Reset() => _nextTimestampUs = null;
+}
+
 internal static class PacketProtocol
 {
     public const int Header = 24;

@@ -94,4 +94,4 @@ jobs:
           mv 'AKTela Capture.exe' AKTela-Capture.exe
           zip -9 AKTela-Capture-v2.6.0-Windows-x64.zip AKTela-Capture.exe
           sha256sum AKTela-Capture.exe AKTela-Capture-v2.6.0-Windows-x64.zip > SHA256SUMS.txt
-          gh release create v2.6.0 AKTela-Capture.exe AKTela-Capture-v2.6.0-Windows-x64.zip SHA256SUMS.txt --target "$COMMIT_SHA" --title 'AKTela Capture 2.6.0' --notes 'Corrige telas pretas em jogos e aplicativos acelerados por GPU usando Windows.Graphics.Capture, centraliza janelas sem cortar ou deformar e atualiza automaticamente o FFmpeg necessário.'
+          gh release create v2.6.0 AKTela-Capture.exe AKTela-Capture-v2.6.0-Windows-x64.zip SHA256SUMS.txt --target "$COMMIT_SHA" --title 'AKTela Capture 2.6.0' --notes 'Corrige telas pretas em jogos e aplicativos acelerados por GPU usando Windows.Graphics.Capture, centraliza janelas sem cortar ou deformar, atualiza automaticamente o FFmpeg necessário e estabiliza os timestamps do áudio sem reduzir a prioridade do vídeo.'

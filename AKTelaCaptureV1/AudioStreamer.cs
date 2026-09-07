@@ -8,7 +8,10 @@ namespace AKTelaCapture;
 internal sealed class AudioStreamer : IAsyncDisposable
 {
     private const int Rate = 48_000, Channels = 2, FrameSamples = 960, FrameBytes = FrameSamples * Channels * 2;
+    private const int FrameDurationUs = 20_000;
+    private const int MaxBufferedFrames = 6;
     private WasapiRecorder? _recorder; private BufferedWaveProvider? _buffer; private CancellationTokenSource? _cts; private Task? _task;
+    private readonly FixedFrameTimestampClock _timestampClock = new();
     public event Action<byte[]>? PacketReady; public event Action<string>? Error;
 
     public async Task StartAsync(AudioMode mode, int sourcePid)
@@ -16,6 +19,7 @@ internal sealed class AudioStreamer : IAsyncDisposable
         if (mode == AudioMode.Off || _task is { IsCompleted: false }) return;
         try
         {
+            _timestampClock.Reset();
             var format = new WaveFormat(Rate, 16, Channels);
             var builder = new WasapiRecorderBuilder().WithFormat(format).WithBufferLength(40);
             if (mode == AudioMode.SourceOnly)
@@ -55,16 +59,29 @@ internal sealed class AudioStreamer : IAsyncDisposable
         encoder.Complexity = 3;
         encoder.UseVBR = true;
         encoder.SignalType = OpusSignal.OPUS_SIGNAL_MUSIC;
-        var pcmBytes = new byte[FrameBytes]; var pcm = new short[FrameSamples * Channels]; var encoded = new byte[4000];
+        var pcmBytes = new byte[FrameBytes]; var discarded = new byte[FrameBytes];
+        var pcm = new short[FrameSamples * Channels]; var encoded = new byte[4000];
         try
         {
             while (!token.IsCancellationRequested)
             {
                 if (_buffer.BufferedBytes < FrameBytes) { await Task.Delay(3, token); continue; }
+
+                // Se o encoder perder tempo de CPU, mantenha somente os 120 ms mais
+                // recentes. Enviar todo o áudio antigo faria a voz ficar atrás do vídeo.
+                var skipped = false;
+                while (_buffer.BufferedBytes > FrameBytes * MaxBufferedFrames)
+                {
+                    _buffer.Read(discarded.AsSpan(0, FrameBytes));
+                    skipped = true;
+                }
+                if (skipped) _timestampClock.Reset();
+
                 var read = _buffer.Read(pcmBytes.AsSpan(0, FrameBytes)); if (read < FrameBytes) continue;
                 Buffer.BlockCopy(pcmBytes, 0, pcm, 0, FrameBytes);
                 var count = encoder.Encode(pcm.AsSpan(), FrameSamples, encoded.AsSpan(), encoded.Length); if (count <= 0) continue;
-                PacketReady?.Invoke(PacketProtocol.Create(MediaKind.Audio, true, MediaClock.NowMicroseconds(), 20_000, encoded.AsSpan(0, count)));
+                var timestampUs = _timestampClock.Next(MediaClock.NowMicroseconds(), FrameDurationUs);
+                PacketReady?.Invoke(PacketProtocol.Create(MediaKind.Audio, true, timestampUs, FrameDurationUs, encoded.AsSpan(0, count)));
             }
         }
         catch (OperationCanceledException) { }
