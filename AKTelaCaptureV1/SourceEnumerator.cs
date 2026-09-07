@@ -48,7 +48,8 @@ internal static class SourceEnumerator
         // DWM fornece o retângulo realmente visível, sem as bordas invisíveis de
         // redimensionamento do GetWindowRect. Isso mantém o recorte de fallback e
         // o cursor alinhados com a janela que o Windows compõe na tela.
-        if (DwmGetWindowAttribute(hwnd, DwmwaExtendedFrameBounds, out var rc, Marshal.SizeOf<RECT>()) != 0 &&
+        RECT rc;
+        if (DwmGetWindowAttribute(hwnd, DwmwaExtendedFrameBounds, out rc, Marshal.SizeOf<RECT>()) != 0 &&
             !GetWindowRect(hwnd, out rc))
         {
             if (!GetClientRect(hwnd, out rc)) return false;
