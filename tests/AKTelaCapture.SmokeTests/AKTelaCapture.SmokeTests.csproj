@@ -15,5 +15,6 @@
     <Compile Include="../../AKTelaCaptureV1/H264AccessUnitReader.cs" Link="Production/H264AccessUnitReader.cs" />
     <Compile Include="../../AKTelaCaptureV1/IvfFrameReader.cs" Link="Production/IvfFrameReader.cs" />
     <Compile Include="../../AKTelaCaptureV1/PacketProtocol.cs" Link="Production/PacketProtocol.cs" />
+    <Compile Include="../../AKTelaCaptureV1/RelayClient.cs" Link="Production/RelayClient.cs" />
   </ItemGroup>
 </Project>

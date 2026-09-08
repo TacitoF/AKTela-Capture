@@ -1,15 +1,17 @@
-# AKTela Capture 2.6.0
+# AKTela Capture 2.6.1
 
 Interface redesenhada e correções de estabilidade para transmissão em tempo real.
 
 - O relógio do áudio agora avança pelas amostras codificadas, evitando sobreposição quando os pacotes são processados em rajadas.
 - A fila de envio preserva somente o áudio recente durante congestionamentos, mantendo o vídeo como prioridade e evitando som atrasado.
+- Os lotes de mídia foram reduzidos de 80 ms para 40 ms, alimentando o player com áudio mais uniforme.
+- A fila de áudio tolera oscilações breves de até 160 ms sem eliminar imediatamente um bloco Opus.
 
 - Até três Captures podem transmitir na mesma Activity, cada um ocupando uma tela independente.
 - Quando houver duas ou três telas, o Capture limita automaticamente cada transmissão a 720p e 30 FPS para reduzir banda, CPU e custo no Relay.
 - O status identifica a posição da transmissão (`Tela 1/3`, `Tela 2/3` ou `Tela 3/3`).
 - O nome editável do transmissor acompanha cada tela na Activity.
-- Vídeo e áudio são agrupados em lotes curtos, reduzindo em cerca de 6 a 9 vezes as mensagens contabilizadas pela Cloudflare.
+- Vídeo e áudio são agrupados em lotes de 40 ms, reduzindo em cerca de 3 vezes as mensagens contabilizadas pela Cloudflare.
 - A captura de janela usa `gfxcapture`/Windows.Graphics.Capture com o `HWND` selecionado, evitando quadros pretos em jogos e aplicativos acelerados por GPU.
 - Janelas mantêm a proporção original e ficam centralizadas no vídeo, sem corte ou deformação; bordas visíveis são calculadas pelo DWM.
 - O FFmpeg antigo em cache é atualizado automaticamente para uma compilação com suporte ao `gfxcapture`.
