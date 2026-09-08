@@ -14,10 +14,13 @@ internal sealed class RelayClient : IAsyncDisposable
     // da rede, forçando espera por um novo quadro-chave (até 1s) e travando a imagem de
     // quem assistia. Um pouco mais de folga absorve jitter sem custar latência perceptível.
     private const int VideoCapacity = 8;
-    // Mantém no máximo 120 ms de áudio. Em congestionamento, preservar áudio recente
-    // é melhor do que enviar quase meio segundo de som atrasado atrás do vídeo.
-    private const int AudioCapacity = 6;
-    private const int MediaBatchWindowMs = 80;
+    // Absorve até 160 ms de oscilação sem eliminar um bloco Opus de 20 ms. A fila
+    // continua descartando o mais antigo em congestionamentos maiores, preservando
+    // a prioridade e a baixa latência do vídeo.
+    internal const int AudioCapacity = 8;
+    // 80 ms chegavam ao player como rajadas longas. Lotes de 40 ms mantêm a economia
+    // de mensagens no Relay, mas alimentam o buffer contínuo antes que ele se esvazie.
+    internal const int MediaBatchWindowMs = 40;
 
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(4) };
 

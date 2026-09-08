@@ -4,6 +4,12 @@ using System.Buffers.Binary;
 using System.Drawing;
 using AKTelaCapture;
 
+Check(RelayClient.MediaBatchWindowMs == 40,
+    "Janela de lote voltou a acumular mais de dois blocos Opus");
+Check(RelayClient.AudioCapacity * 20 >= 140,
+    "Fila de áudio não absorve uma oscilação curta de envio");
+Console.WriteLine("PASS transporte de áudio: lotes de 40 ms e reserva curta contra jitter.");
+
 // Exercise overflow with real AKV5 packets: never emit a dependent delta after loss.
 var queue = new VideoPacketQueue(2);
 byte[] Packet(bool key) => PacketProtocol.Create(MediaKind.Video, key, 0, 33333, new byte[] { 1 });
