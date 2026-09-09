@@ -1,6 +1,13 @@
-# AKTela Capture 2.6.1
+# AKTela Capture 2.7.0
 
 Interface redesenhada e correções de estabilidade para transmissão em tempo real.
+
+- O perfil `Jogo` agora usa 720p e 60 FPS por padrão, processando 56% menos pixels que 1080p60 sem perder fluidez.
+- NVENC tenta primeiro manter captura, conversão e redimensionamento em superfícies D3D11, sem copiar cada frame para a RAM.
+- Drivers incompatíveis voltam automaticamente para os caminhos estáveis com cópia, Media Foundation ou software.
+- O Capture reduz `1080p60 → 720p60 → 720p30` quando a máquina não sustenta o FPS solicitado.
+- Encoder H.264/VP8 por software ativa 720p30 automaticamente para não disputar CPU com o jogo.
+- O FFmpeg executa abaixo da prioridade normal e o áudio deixa de consultar o buffer a cada 3 ms.
 
 - O relógio do áudio agora avança pelas amostras codificadas, evitando sobreposição quando os pacotes são processados em rajadas.
 - A fila de envio preserva somente o áudio recente durante congestionamentos, mantendo o vídeo como prioridade e evitando som atrasado.
@@ -14,7 +21,7 @@ Interface redesenhada e correções de estabilidade para transmissão em tempo r
 - Vídeo e áudio são agrupados em lotes de 40 ms, reduzindo em cerca de 3 vezes as mensagens contabilizadas pela Cloudflare.
 - A captura de janela usa `gfxcapture`/Windows.Graphics.Capture com o `HWND` selecionado, evitando quadros pretos em jogos e aplicativos acelerados por GPU.
 - Janelas mantêm a proporção original e ficam centralizadas no vídeo, sem corte ou deformação; bordas visíveis são calculadas pelo DWM.
-- O FFmpeg antigo em cache é atualizado automaticamente para uma compilação com suporte ao `gfxcapture`.
+- O FFmpeg antigo em cache é atualizado automaticamente para uma compilação com `gfxcapture` e `scale_d3d11`.
 - Desktop Duplication e GDI permanecem como fallbacks, nesta ordem, para máquinas ou aplicativos incompatíveis.
 
 - A janela agora se limita automaticamente à área útil do monitor, respeita DPI por monitor e pode ser redimensionada; em telas menores, a configuração continua acessível por rolagem.
@@ -28,7 +35,7 @@ Interface redesenhada e correções de estabilidade para transmissão em tempo r
 - A latência usada na adaptação percorre Capture → espectador → Capture.
 - Proteções contra concorrência ao iniciar, encerrar, reconectar e fechar o aplicativo.
 
-- Remove `scale_d3d11` do caminho padrão por instabilidade em alguns drivers.
+- `scale_d3d11` retorna como primeira tentativa de alto desempenho; falhas de driver acionam automaticamente o caminho estável anterior.
 - Desktop Duplication continua sendo usado para captura; NVENC continua sendo o encoder preferencial.
 - `h264_mf` recebe perfil e nível numéricos; NVENC e `libx264` recebem nomes de perfil (`baseline`, `main`, `high`) e níveis como `3.1`.
 - `libx264` habilita CABAC para Main/High e transformação 8x8 para High, evitando que o preset `ultrafast` produza Baseline quando outro perfil foi negociado.

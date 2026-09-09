@@ -28,6 +28,11 @@ internal sealed class VideoStreamer : IAsyncDisposable
     public event Action<string, string, string>? CodecChanged;
     public event Action<string>? StreamError;
 
+    internal static bool IsSoftwareEncoder(string? value) =>
+        !string.IsNullOrWhiteSpace(value) &&
+        (value.StartsWith("Software", StringComparison.OrdinalIgnoreCase) ||
+         value.Contains("VP8", StringComparison.OrdinalIgnoreCase));
+
     public async Task StartAsync(CaptureSource source, StreamConfig config)
     {
         await _lifecycle.WaitAsync();
@@ -150,6 +155,7 @@ internal sealed class VideoStreamer : IAsyncDisposable
         {
             return
             [
+                ("NVENC · GPU direto · captura moderna de janela", BuildGfxNvencGpu(ffmpeg, source, cfg)),
                 ("NVENC · captura moderna de janela", BuildGfxNvenc(ffmpeg, source, cfg)),
                 ("Media Foundation · captura moderna de janela", BuildGfxMf(ffmpeg, source, cfg)),
                 ("Software H.264 · captura moderna de janela", BuildGfxX264(ffmpeg, source, cfg)),
@@ -159,17 +165,32 @@ internal sealed class VideoStreamer : IAsyncDisposable
             ];
         }
 
-        // O scale_d3d11 direto foi removido do caminho padrão: alguns drivers/GPUs
-        // retornam E_INVALIDARG ao criar a textura de saída. Mantemos Desktop
-        // Duplication para captura, baixamos o frame para memória e usamos NVENC.
-        return
+        // O caminho D3D11 direto evita a ida e volta pela RAM. Alguns drivers retornam
+        // E_INVALIDARG nessa conversão; por isso ele é apenas a primeira tentativa e o
+        // caminho anterior, com hwdownload, permanece imediatamente depois.
+        var displayAttempts = new List<(string Name, ProcessStartInfo Psi)>();
+        // scale_d3d11 não possui padding. Em monitores ultrawide/verticais, o caminho
+        // direto deformaria a imagem; nesses casos usamos o fallback que preserva a
+        // proporção e centraliza o conteúdo.
+        if (HasCompatibleAspectRatio(source, cfg))
+            displayAttempts.Add(("NVENC · GPU direto · Desktop Duplication", BuildDdaNvenc(ffmpeg, source, cfg, true)));
+        displayAttempts.AddRange(
         [
             ("NVENC · Desktop Duplication", BuildDdaNvenc(ffmpeg, source, cfg, false)),
             ("NVENC · compatibilidade", BuildGdiNvenc(ffmpeg, source, cfg)),
             ("Media Foundation · Desktop Duplication", BuildDdaMf(ffmpeg, source, cfg)),
             ("Media Foundation · compatibilidade", BuildGdiMf(ffmpeg, source, cfg)),
             ("Software H.264 · compatibilidade", BuildGdiX264(ffmpeg, source, cfg))
-        ];
+        ]);
+        return displayAttempts;
+    }
+
+    internal static bool HasCompatibleAspectRatio(CaptureSource source, StreamConfig cfg)
+    {
+        if (source.Width <= 0 || source.Height <= 0 || cfg.Width <= 0 || cfg.Height <= 0) return false;
+        var sourceRatio = (double)source.Width / source.Height;
+        var outputRatio = (double)cfg.Width / cfg.Height;
+        return Math.Abs(sourceRatio / outputRatio - 1d) <= 0.02;
     }
 
     private static List<(string Name, ProcessStartInfo Psi)> Vp8Attempts(string ffmpeg, CaptureSource source, StreamConfig cfg) =>
@@ -191,6 +212,7 @@ internal sealed class VideoStreamer : IAsyncDisposable
         using var process = new Process { StartInfo = psi };
         _process = process;
         if (!process.Start()) return (false, "Não foi possível iniciar o FFmpeg.");
+        ProtectGamePerformance(process);
 
         SetEncoder(name);
         var stderrTask = process.StandardError.ReadToEndAsync(token);
@@ -200,12 +222,14 @@ internal sealed class VideoStreamer : IAsyncDisposable
         var framesThisSecond = 0;
         var validated = false;
         string? validationError = null;
+        using var startupTimeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+        startupTimeout.CancelAfter(TimeSpan.FromSeconds(5));
 
         try
         {
             while (!token.IsCancellationRequested)
             {
-                var read = await process.StandardOutput.BaseStream.ReadAsync(buffer, token);
+                var read = await process.StandardOutput.BaseStream.ReadAsync(buffer, validated ? token : startupTimeout.Token);
                 if (read <= 0) break;
 
                 foreach (var (data, key) in reader.Push(buffer, read))
@@ -241,6 +265,10 @@ internal sealed class VideoStreamer : IAsyncDisposable
         {
             return (true, string.Empty);
         }
+        catch (OperationCanceledException)
+        {
+            validationError = "caminho de captura não produziu um quadro-chave em 5 segundos";
+        }
         finally
         {
             try { if (!process.HasExited) process.Kill(true); } catch { }
@@ -260,6 +288,7 @@ internal sealed class VideoStreamer : IAsyncDisposable
         using var process = new Process { StartInfo = psi };
         _process = process;
         if (!process.Start()) return (false, "Não foi possível iniciar o FFmpeg.");
+        ProtectGamePerformance(process);
 
         SetEncoder(name);
         SetCodec("vp8", "compatibilidade", "vp8");
@@ -269,12 +298,14 @@ internal sealed class VideoStreamer : IAsyncDisposable
         var fpsClock = Stopwatch.StartNew();
         var framesThisSecond = 0;
         var gotFrames = false;
+        using var startupTimeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+        startupTimeout.CancelAfter(TimeSpan.FromSeconds(5));
 
         try
         {
             while (!token.IsCancellationRequested)
             {
-                var read = await process.StandardOutput.BaseStream.ReadAsync(buffer, token);
+                var read = await process.StandardOutput.BaseStream.ReadAsync(buffer, gotFrames ? token : startupTimeout.Token);
                 if (read <= 0) break;
 
                 foreach (var (data, key) in reader.Push(buffer, read))
@@ -292,6 +323,11 @@ internal sealed class VideoStreamer : IAsyncDisposable
         {
             return (true, string.Empty);
         }
+        catch (OperationCanceledException)
+        {
+            // O próximo método de captura/encoder deve ser tentado em vez de deixar a
+            // transmissão indefinidamente presa em um processo que iniciou sem frames.
+        }
         finally
         {
             try { if (!process.HasExited) process.Kill(true); } catch { }
@@ -301,6 +337,8 @@ internal sealed class VideoStreamer : IAsyncDisposable
         var stderr = await SafeAwait(stderrTask);
         if (gotFrames && token.IsCancellationRequested) return (true, string.Empty);
         var detail = Tail(stderr);
+        if (!gotFrames && startupTimeout.IsCancellationRequested && string.IsNullOrWhiteSpace(detail))
+            detail = "caminho VP8 não produziu vídeo em 5 segundos";
         return (false, string.IsNullOrWhiteSpace(detail) ? "encoder VP8 encerrou sem vídeo" : detail);
     }
 
@@ -421,6 +459,13 @@ internal sealed class VideoStreamer : IAsyncDisposable
         RedirectStandardError = true
     };
 
+    private static void ProtectGamePerformance(Process process)
+    {
+        // Conversões por software e fallbacks nunca devem disputar CPU em igualdade
+        // com o jogo. Falhas de permissão são inofensivas e mantêm a prioridade padrão.
+        try { process.PriorityClass = ProcessPriorityClass.BelowNormal; } catch { }
+    }
+
     private static void Add(ProcessStartInfo p, params string[] args)
     {
         foreach (var arg in args) p.ArgumentList.Add(arg);
@@ -447,6 +492,19 @@ internal sealed class VideoStreamer : IAsyncDisposable
             $"gfxcapture=hwnd={hwnd}:capture_cursor=0:capture_border=1:display_border=0:" +
             $"max_framerate={cfg.Fps}:width={width}:height={height}:resize_mode=scale_aspect," +
             $"hwdownload,format=bgra,fps={cfg.Fps},setsar=1,format={pixelFormat}");
+    }
+
+    private static void GfxInputGpu(ProcessStartInfo p, CaptureSource src, StreamConfig cfg)
+    {
+        var hwnd = unchecked((ulong)src.WindowHandle.ToInt64());
+        var width = Even(cfg.Width);
+        var height = Even(cfg.Height);
+        Add(p,
+            "-hide_banner", "-loglevel", "warning",
+            "-filter_complex",
+            $"gfxcapture=hwnd={hwnd}:capture_cursor=0:capture_border=1:display_border=0:" +
+            $"max_framerate={cfg.Fps}:width={width}:height={height}:resize_mode=scale_aspect," +
+            $"scale_d3d11=width={width}:height={height}:format=nv12");
     }
 
     private static void DdaInput(ProcessStartInfo p, CaptureSource src, StreamConfig cfg)
@@ -521,7 +579,9 @@ internal sealed class VideoStreamer : IAsyncDisposable
         var buf = Math.Max(160, cfg.BitrateMbps * 1000 / Math.Max(1, cfg.Fps));
         Add(p,
             "-c:v", "h264_nvenc",
-            "-preset", cfg.Fps >= 60 ? "p3" : "p4",
+            // P2 reduz o trabalho do encoder em 60 FPS; em 30 FPS, P3 ainda entrega
+            // boa qualidade sem pressionar a máquina durante o jogo.
+            "-preset", cfg.Fps >= 60 ? "p2" : "p3",
             "-tune", "ull",
             "-rc", "cbr",
             "-b:v", $"{cfg.BitrateMbps}M",
@@ -687,6 +747,14 @@ internal sealed class VideoStreamer : IAsyncDisposable
     {
         var p = Base(exe);
         GfxInput(p, src, cfg, "nv12");
+        Nvenc(p, cfg);
+        return p;
+    }
+
+    private static ProcessStartInfo BuildGfxNvencGpu(string exe, CaptureSource src, StreamConfig cfg)
+    {
+        var p = Base(exe);
+        GfxInputGpu(p, src, cfg);
         Nvenc(p, cfg);
         return p;
     }

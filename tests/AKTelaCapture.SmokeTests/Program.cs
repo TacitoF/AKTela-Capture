@@ -10,6 +10,15 @@ Check(RelayClient.AudioCapacity * 20 >= 140,
     "Fila de áudio não absorve uma oscilação curta de envio");
 Console.WriteLine("PASS transporte de áudio: lotes de 40 ms e reserva curta contra jitter.");
 
+Check(QualityOption.LowerForPerformance("1080p60") == "720p60" &&
+      QualityOption.LowerForPerformance("720p60") == "720p30",
+    "Adaptação local não preserva 60 FPS antes de reduzir a fluidez");
+Check(VideoStreamer.IsSoftwareEncoder("Software H.264") &&
+      VideoStreamer.IsSoftwareEncoder("Software VP8 · compatibilidade") &&
+      !VideoStreamer.IsSoftwareEncoder("NVENC · GPU direto"),
+    "Detecção de encoder por software está incorreta");
+Console.WriteLine("PASS proteção do jogo: redução 1080p60 → 720p60 → 720p30 e detecção de software.");
+
 // Exercise overflow with real AKV5 packets: never emit a dependent delta after loss.
 var queue = new VideoPacketQueue(2);
 byte[] Packet(bool key) => PacketProtocol.Create(MediaKind.Video, key, 0, 33333, new byte[] { 1 });
@@ -50,7 +59,7 @@ Console.WriteLine("PASS relógio de áudio: duração contínua e reinício.");
 var ffmpeg = args.Length > 0 ? args[0] : await FfmpegManager.EnsureAsync();
 Console.WriteLine($"FFmpeg: {ffmpeg}");
 Check(await FfmpegManager.SupportsGfxCaptureAsync(ffmpeg),
-    "O FFmpeg publicado não contém o filtro gfxcapture necessário para janelas aceleradas por GPU");
+    "O FFmpeg publicado não contém gfxcapture e scale_d3d11 necessários para o caminho GPU");
 
 var windowSource = new CaptureSource(
     SourceKind.Window, "Teste · janela", new Rectangle(40, 60, 1000, 700), 0,
@@ -67,13 +76,38 @@ Check(gfxArguments.Contains("resize_mode=scale_aspect", StringComparison.Ordinal
 Check(gfxArguments.Contains("capture_border=1", StringComparison.Ordinal),
     "Captura moderna e limites visíveis da janela estão inconsistentes");
 
+var gameConfig = Config(QualityOption.ByKey("720p60"), "main");
+var gfxGpuProcess = (ProcessStartInfo)Method("BuildGfxNvencGpu", BindingFlags.Static)
+    .Invoke(null, new object[] { ffmpeg, windowSource, gameConfig })!;
+var gfxGpuArguments = string.Join("\n", gfxGpuProcess.ArgumentList);
+Check(gfxGpuArguments.Contains("scale_d3d11=", StringComparison.Ordinal) &&
+      !gfxGpuArguments.Contains("hwdownload", StringComparison.Ordinal),
+    "Caminho rápido de janela ainda transfere cada frame para a RAM");
+Check(gfxGpuArguments.Contains("max_framerate=60", StringComparison.Ordinal) &&
+      gfxGpuArguments.Contains("-preset\np2", StringComparison.Ordinal),
+    "Perfil Jogo não usa o preset NVENC de menor impacto em 60 FPS");
+
+var displaySource = new CaptureSource(
+    SourceKind.Display, "Teste · tela", new Rectangle(0, 0, 1920, 1080), 0,
+    IntPtr.Zero, 0, "display");
+var ddaGpuProcess = (ProcessStartInfo)Method("BuildDdaNvenc", BindingFlags.Static)
+    .Invoke(null, new object[] { ffmpeg, displaySource, windowConfig, true })!;
+var ddaGpuArguments = string.Join("\n", ddaGpuProcess.ArgumentList);
+Check(ddaGpuArguments.Contains("scale_d3d11=", StringComparison.Ordinal) &&
+      !ddaGpuArguments.Contains("hwdownload", StringComparison.Ordinal),
+    "Caminho rápido da tela ainda transfere cada frame para a RAM");
+var ultrawideSource = displaySource with { Bounds = new Rectangle(0, 0, 3440, 1440) };
+Check(VideoStreamer.HasCompatibleAspectRatio(displaySource, windowConfig) &&
+      !VideoStreamer.HasCompatibleAspectRatio(ultrawideSource, windowConfig),
+    "Caminho GPU pode deformar monitores cuja proporção não seja 16:9");
+
 var gdiProcess = (ProcessStartInfo)Method("BuildGdiX264", BindingFlags.Static)
     .Invoke(null, new object[] { ffmpeg, windowSource, windowConfig })!;
 var gdiArguments = string.Join("\n", gdiProcess.ArgumentList);
 Check(gdiArguments.Contains("force_original_aspect_ratio=decrease", StringComparison.Ordinal) &&
       gdiArguments.Contains("pad=1280:720", StringComparison.Ordinal),
     "Fallback GDI pode deformar ou desalinhar a janela");
-Console.WriteLine("PASS captura de janela: gfxcapture por HWND e proporção centralizada nos fallbacks.");
+Console.WriteLine("PASS captura: GPU direto sem cópia para RAM e fallbacks centralizados.");
 
 foreach (var quality in QualityOption.All)
 {
