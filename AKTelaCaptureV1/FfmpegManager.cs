@@ -7,7 +7,7 @@ namespace AKTelaCapture;
 internal static class FfmpegManager
 {
     private const string DownloadUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-win64-gpl-9.0.zip";
-    private const string RequiredBuildId = "n9-gfxcapture-2026-07";
+    private const string RequiredBuildId = "n9-gpu-pipeline-2026-09";
     private static readonly SemaphoreSlim Gate = new(1, 1);
     private static string ToolDir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AKTelaCapture", "tools");
     private static string BuildMarker => Path.Combine(ToolDir, "ffmpeg-build.txt");
@@ -36,7 +36,7 @@ internal static class FfmpegManager
             try
             {
                 using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
-                http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("AKTelaCapture", "2.6"));
+                http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("AKTelaCapture", "2.7"));
                 using var response = await http.GetAsync(DownloadUrl, HttpCompletionOption.ResponseHeadersRead, token);
                 response.EnsureSuccessStatusCode();
                 var total = response.Content.Headers.ContentLength;
@@ -57,7 +57,7 @@ internal static class FfmpegManager
                             ?? throw new InvalidOperationException("ffmpeg.exe não encontrado no pacote baixado.");
 
                 if (!await SupportsGfxCaptureAsync(found, token))
-                    throw new InvalidOperationException("O FFmpeg baixado não oferece a captura moderna de janelas (gfxcapture).");
+                    throw new InvalidOperationException("O FFmpeg baixado não oferece a captura moderna e o redimensionamento pela GPU necessários.");
 
                 File.Copy(found, PathToExe, true);
                 await File.WriteAllTextAsync(BuildMarker, RequiredBuildId, token);
@@ -98,7 +98,9 @@ internal static class FfmpegManager
             var stderr = process.StandardError.ReadToEndAsync(timeout.Token);
             await process.WaitForExitAsync(timeout.Token);
             var output = (await stdout) + (await stderr);
-            return process.ExitCode == 0 && output.Contains("gfxcapture", StringComparison.Ordinal);
+            return process.ExitCode == 0 &&
+                   output.Contains("gfxcapture", StringComparison.Ordinal) &&
+                   output.Contains("scale_d3d11", StringComparison.Ordinal);
         }
         catch
         {

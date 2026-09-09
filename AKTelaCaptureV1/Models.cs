@@ -34,6 +34,17 @@ internal sealed record QualityOption(string Key, string Label, int Width, int He
         _ => "720p30"
     };
 
+    // Para jogos, preservar 60 FPS costuma ser mais importante do que preservar
+    // 1080p. A adaptação de desempenho reduz primeiro a quantidade de pixels e só
+    // então a fluidez.
+    public static string LowerForPerformance(string key) => key switch
+    {
+        "1080p60" => "720p60",
+        "1080p30" => "720p30",
+        "720p60" => "720p30",
+        _ => "720p30"
+    };
+
     public static string HigherOneStep(string key, string ceiling) => key switch
     {
         "720p30" when Rank(ceiling) >= Rank("1080p30") => "1080p30",

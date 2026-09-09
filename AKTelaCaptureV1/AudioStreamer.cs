@@ -12,6 +12,7 @@ internal sealed class AudioStreamer : IAsyncDisposable
     private const int MaxBufferedFrames = 6;
     private WasapiRecorder? _recorder; private BufferedWaveProvider? _buffer; private CancellationTokenSource? _cts; private Task? _task;
     private readonly FixedFrameTimestampClock _timestampClock = new();
+    private readonly SemaphoreSlim _dataReady = new(0, 1);
     public event Action<byte[]>? PacketReady; public event Action<string>? Error;
 
     public async Task StartAsync(AudioMode mode, int sourcePid)
@@ -20,6 +21,7 @@ internal sealed class AudioStreamer : IAsyncDisposable
         try
         {
             _timestampClock.Reset();
+            while (_dataReady.Wait(0)) { }
             var format = new WaveFormat(Rate, 16, Channels);
             var builder = new WasapiRecorderBuilder().WithFormat(format).WithBufferLength(40);
             if (mode == AudioMode.SourceOnly)
@@ -50,7 +52,16 @@ internal sealed class AudioStreamer : IAsyncDisposable
         _buffer = null;
     }
 
-    private void OnData(ReadOnlySpan<byte> data, AudioClientBufferFlags flags, long devicePosition, long qpcPosition) { try { if (data.Length > 0) _buffer?.AddSamples(data); } catch { } }
+    private void OnData(ReadOnlySpan<byte> data, AudioClientBufferFlags flags, long devicePosition, long qpcPosition)
+    {
+        try
+        {
+            if (data.Length <= 0) return;
+            _buffer?.AddSamples(data);
+            try { _dataReady.Release(); } catch (SemaphoreFullException) { }
+        }
+        catch { }
+    }
     private async Task EncodeLoop(CancellationToken token)
     {
         if (_buffer is null) return;
@@ -65,7 +76,7 @@ internal sealed class AudioStreamer : IAsyncDisposable
         {
             while (!token.IsCancellationRequested)
             {
-                if (_buffer.BufferedBytes < FrameBytes) { await Task.Delay(3, token); continue; }
+                if (_buffer.BufferedBytes < FrameBytes) { await _dataReady.WaitAsync(token); continue; }
 
                 // Se o encoder perder tempo de CPU, mantenha somente os 120 ms mais
                 // recentes. Enviar todo o áudio antigo faria a voz ficar atrás do vídeo.
@@ -87,5 +98,9 @@ internal sealed class AudioStreamer : IAsyncDisposable
         catch (OperationCanceledException) { }
         catch (Exception ex) { Error?.Invoke(ex.Message); }
     }
-    public async ValueTask DisposeAsync() => await StopAsync();
+    public async ValueTask DisposeAsync()
+    {
+        await StopAsync();
+        _dataReady.Dispose();
+    }
 }

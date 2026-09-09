@@ -49,11 +49,13 @@ internal sealed partial class MainForm : Form
     private string _preset = "Leve";
     private AudienceCapabilities _audience = AudienceCapabilities.Default();
     private string _networkCapKey = "1080p60";
+    private string _performanceCapKey = "1080p60";
     private string _roomCapKey = "1080p60";
     private int _streamSlot;
     private int _activeStreams = 1;
     private long _lastDropSnapshot;
     private int _stableTicks;
+    private int _lowFpsTicks;
     private long _lastKeyframeRestartAt;
 
     private static readonly Color Bg = Color.FromArgb(16, 19, 25);
@@ -131,7 +133,9 @@ internal sealed partial class MainForm : Form
         if (preset == "Jogo")
         {
             _sourceType.SelectedItem = "Janela";
-            _quality.SelectedItem = QualityOption.All.First(q => q.Key == "1080p60");
+            // 720p60 processa 56% menos pixels que 1080p60 e mantém a fluidez que
+            // importa em jogos. 1080p60 continua disponível para seleção manual.
+            _quality.SelectedItem = QualityOption.All.First(q => q.Key == "720p60");
         }
         else if (preset == "Filme")
         {
@@ -295,7 +299,9 @@ internal sealed partial class MainForm : Form
     {
         var requestedKey = requested.Key;
         var audienceKey = _audience.Viewers > 0 ? _audience.ModeKey : requestedKey;
-        var effectiveKey = QualityOption.Min(QualityOption.Min(QualityOption.Min(requestedKey, audienceKey), _networkCapKey), _roomCapKey);
+        var effectiveKey = QualityOption.Min(
+            QualityOption.Min(QualityOption.Min(QualityOption.Min(requestedKey, audienceKey), _networkCapKey), _performanceCapKey),
+            _roomCapKey);
 
         var codec = _audience.Viewers > 0 ? _audience.VideoCodec : "h264";
         var profile = _audience.Viewers > 0 ? _audience.VideoProfile : "main";
@@ -347,10 +353,12 @@ internal sealed partial class MainForm : Form
             _publisherBlocked = false;
             _audience = AudienceCapabilities.Default();
             _networkCapKey = requested.Key;
+            _performanceCapKey = requested.Key;
             _roomCapKey = "1080p60";
             _streamSlot = 0;
             _activeStreams = 1;
             _stableTicks = 0;
+            _lowFpsTicks = 0;
             _lastDropSnapshot = 0;
 
             var initial = BuildEffectiveConfig(source, requested);
@@ -396,6 +404,14 @@ internal sealed partial class MainForm : Form
                     probeEncoder = await _video.ProbeAsync(probeConfig);
                 }
                 _encoderValue.Text = ShortEncoder(probeEncoder);
+                if (VideoStreamer.IsSoftwareEncoder(probeEncoder))
+                {
+                    // Não deixe uma máquina sem encoder de hardware iniciar jogos em
+                    // 60 FPS por software. Isso protege imediatamente o FPS do jogo.
+                    _performanceCapKey = "720p30";
+                    initial = BuildEffectiveConfig(source, requested);
+                    _outputValue.Text = $"{initial.Width}×{initial.Height}";
+                }
 
                 SetStatus("Verificando áudio", Yellow, "Teste 4/4");
                 if (_activeAudio == AudioMode.SystemWithoutDiscord && ProcessTreeHelper.FindDiscordRootProcessId() is null)
@@ -555,9 +571,33 @@ internal sealed partial class MainForm : Form
     {
         if (!_sharing || _relay.ViewerCount <= 0 || _quality.SelectedItem is not QualityOption requested) return;
         var diagnostics = _relay.GetDiagnostics();
+        var video = _video.GetDiagnostics();
+        var active = _activeConfig;
         var drops = diagnostics.VideoDropped;
         var deltaDrops = Math.Max(0, drops - _lastDropSnapshot);
         _lastDropSnapshot = drops;
+
+        if (VideoStreamer.IsSoftwareEncoder(video.Encoder) && QualityOption.Rank(_performanceCapKey) > QualityOption.Rank("720p30"))
+        {
+            _lowFpsTicks = 0;
+            _performanceCapKey = "720p30";
+            await ApplyEffectiveConfig("encoder por software; modo leve ativado para proteger o jogo");
+            return;
+        }
+
+        var localOverload = active is not null && _video.IsRunning && video.Fps > 0 && video.Fps < active.Fps * 0.82;
+        _lowFpsTicks = localOverload ? _lowFpsTicks + 1 : 0;
+        if (_lowFpsTicks >= 2)
+        {
+            _lowFpsTicks = 0;
+            var lowered = QualityOption.LowerForPerformance(_performanceCapKey);
+            if (lowered != _performanceCapKey)
+            {
+                _performanceCapKey = lowered;
+                await ApplyEffectiveConfig("máquina sobrecarregada; resolução reduzida para proteger o jogo");
+                return;
+            }
+        }
 
         // Limiar reduzido de 4 para 2: com a reação imediata ao evento de
         // congestionamento, uma única rajada (fila cheia = capacidade + 1 descartes)
@@ -614,9 +654,11 @@ internal sealed partial class MainForm : Form
         _activeSource = null;
         _activeConfig = null;
         _audience = AudienceCapabilities.Default();
+        _performanceCapKey = "1080p60";
         _roomCapKey = "1080p60";
         _streamSlot = 0;
         _activeStreams = 1;
+        _lowFpsTicks = 0;
         _outputValue.Text = "—";
         _fpsValue.Text = "—";
         _encoderValue.Text = "—";
@@ -748,6 +790,7 @@ internal sealed partial class MainForm : Form
             $"Encoder: {video.Encoder}",
             $"FPS real: {video.Fps:0.0}",
             $"Bitrate alvo: {(config is null ? "—" : $"{config.BitrateMbps} Mbps")}",
+            $"Limite da máquina: {_performanceCapKey}",
             $"Frames: {video.Frames}",
             $"Keyframes: {video.Keyframes}",
             $"Reinícios de encoder: {video.Restarts}",
@@ -836,6 +879,10 @@ internal sealed partial class MainForm : Form
     private static string ShortEncoder(string value)
     {
         if (string.IsNullOrWhiteSpace(value)) return "—";
+        if (value.StartsWith("NVENC", StringComparison.OrdinalIgnoreCase))
+            return value.Contains("GPU direto", StringComparison.OrdinalIgnoreCase) ? "NVENC · GPU" : "NVENC";
+        if (value.StartsWith("Media Foundation", StringComparison.OrdinalIgnoreCase)) return "Media F.";
+        if (VideoStreamer.IsSoftwareEncoder(value)) return value.Contains("VP8", StringComparison.OrdinalIgnoreCase) ? "VP8" : "Software";
         return value
             .Replace("NVENC · Desktop Duplication", "NVENC")
             .Replace("Media Foundation · Desktop Duplication", "Media F.")

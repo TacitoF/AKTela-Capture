@@ -52,6 +52,7 @@ internal static class Program
             "Caracteres ausentes no alfabeto da Activity devem ser rejeitados");
         Invoke(form, "ApplyPreset", "Jogo");
         Check(Field<ComboBox>(form, "_quality").Text.Contains("60 FPS"), "Preset Jogo deve selecionar 60 FPS");
+        Check(Field<ComboBox>(form, "_quality").Text.Contains("720p"), "Preset Jogo deve proteger a máquina usando 720p");
         Invoke(form, "ApplyPreset", "Leve");
         Invoke(form, "Lock", true);
         Check(!Field<Button>(form, "_paste").Enabled && !Field<Button>(form, "_refreshSources").Enabled,

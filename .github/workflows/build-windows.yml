@@ -69,7 +69,7 @@ jobs:
       - name: Publicar artefato
         uses: actions/upload-artifact@v6
         with:
-          name: AKTela-Capture-v2.6.1-Windows-x64
+          name: AKTela-Capture-v2.7.0-Windows-x64
           path: publish/AKTela Capture.exe
           if-no-files-found: error
 
@@ -82,7 +82,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v7
         with:
-          name: AKTela-Capture-v2.6.1-Windows-x64
+          name: AKTela-Capture-v2.7.0-Windows-x64
           path: release
       - name: Publicar versão testada
         env:
@@ -92,6 +92,6 @@ jobs:
         run: |
           cd release
           mv 'AKTela Capture.exe' AKTela-Capture.exe
-          zip -9 AKTela-Capture-v2.6.1-Windows-x64.zip AKTela-Capture.exe
-          sha256sum AKTela-Capture.exe AKTela-Capture-v2.6.1-Windows-x64.zip > SHA256SUMS.txt
-          gh release create v2.6.1 AKTela-Capture.exe AKTela-Capture-v2.6.1-Windows-x64.zip SHA256SUMS.txt --target "$COMMIT_SHA" --title 'AKTela Capture 2.6.1' --notes 'Reduz os lotes de mídia de 80 ms para 40 ms e amplia moderadamente a tolerância da fila de áudio, evitando microcortes sem tirar a prioridade do vídeo nem acumular atraso perceptível.'
+          zip -9 AKTela-Capture-v2.7.0-Windows-x64.zip AKTela-Capture.exe
+          sha256sum AKTela-Capture.exe AKTela-Capture-v2.7.0-Windows-x64.zip > SHA256SUMS.txt
+          gh release create v2.7.0 AKTela-Capture.exe AKTela-Capture-v2.7.0-Windows-x64.zip SHA256SUMS.txt --target "$COMMIT_SHA" --title 'AKTela Capture 2.7.0' --notes 'Reduz o impacto nos jogos com perfil Jogo em 720p60, caminho de captura e escala direto na GPU com fallback automático, prioridade menor para o FFmpeg, proteção contra encoder por software e redução automática quando a máquina não sustenta o FPS.'
