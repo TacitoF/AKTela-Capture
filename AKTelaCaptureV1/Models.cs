@@ -111,6 +111,26 @@ internal sealed record AudienceCapabilities(
         viewers == 0 ? "sem espectadores" : "aguardando recursos dos espectadores");
 }
 
+internal sealed record ViewerDemand(int Viewers, int VideoViewers, int AudioViewers)
+{
+    public static ViewerDemand None => new(0, 0, 0);
+}
+
+internal sealed record ViewerHealth(
+    long SampleAt,
+    int Viewers,
+    int Reporting,
+    double MinDecodedFps,
+    int MaxDecodeQueue,
+    long Dropped,
+    long Resets,
+    int AudioBufferMs,
+    long AudioUnderflows,
+    bool Stalled)
+{
+    public static ViewerHealth Empty => new(0, 0, 0, 0, 0, 0, 0, 0, 0, false);
+}
+
 internal sealed record VideoDiagnostics(
     string Encoder,
     string Codec,

@@ -4,11 +4,11 @@ using System.Buffers.Binary;
 using System.Drawing;
 using AKTelaCapture;
 
-Check(RelayClient.MediaBatchWindowMs == 40,
-    "Janela de lote voltou a acumular mais de dois blocos Opus");
+Check(RelayClient.MediaBatchWindowMs == 20,
+    "Janela de lote não acompanha um bloco Opus de 20 ms");
 Check(RelayClient.AudioCapacity * 20 >= 140,
     "Fila de áudio não absorve uma oscilação curta de envio");
-Console.WriteLine("PASS transporte de áudio: lotes de 40 ms e reserva curta contra jitter.");
+Console.WriteLine("PASS transporte de áudio: lotes de 20 ms e reserva curta contra jitter.");
 
 Check(QualityOption.LowerForPerformance("1080p60") == "720p60" &&
       QualityOption.LowerForPerformance("720p60") == "720p30",
@@ -52,7 +52,9 @@ Check(audioTs1 == 1_000_000 && audioTs2 == 1_020_000 && audioTs3 == 1_040_000,
     "Relógio de áudio comprimiu blocos processados em rajada");
 audioClock.Reset();
 Check(audioClock.Next(2_000_000, 20_000) == 2_000_000, "Relógio de áudio não reiniciou");
-Console.WriteLine("PASS relógio de áudio: duração contínua e reinício.");
+Check(audioClock.Next(3_000_000, 20_000) == 3_000_000,
+    "Relógio de mídia manteve uma timeline antiga depois de uma interrupção longa");
+Console.WriteLine("PASS relógio de mídia: duração contínua, rajadas e reancoragem.");
 
 // A fonte sintética dispensa desktop/GPU, mas atravessa os mesmos argumentos,
 // leitor de SPS, validação e loop de envio usados pela captura real.
@@ -84,8 +86,9 @@ Check(gfxGpuArguments.Contains("scale_d3d11=", StringComparison.Ordinal) &&
       !gfxGpuArguments.Contains("hwdownload", StringComparison.Ordinal),
     "Caminho rápido de janela ainda transfere cada frame para a RAM");
 Check(gfxGpuArguments.Contains("max_framerate=60", StringComparison.Ordinal) &&
+      gfxGpuArguments.Contains("fps=60", StringComparison.Ordinal) &&
       gfxGpuArguments.Contains("-preset\np2", StringComparison.Ordinal),
-    "Perfil Jogo não usa o preset NVENC de menor impacto em 60 FPS");
+    "Perfil Jogo não estabiliza a cadência ou não usa o preset NVENC leve em 60 FPS");
 
 var displaySource = new CaptureSource(
     SourceKind.Display, "Teste · tela", new Rectangle(0, 0, 1920, 1080), 0,
@@ -107,6 +110,9 @@ var gdiArguments = string.Join("\n", gdiProcess.ArgumentList);
 Check(gdiArguments.Contains("force_original_aspect_ratio=decrease", StringComparison.Ordinal) &&
       gdiArguments.Contains("pad=1280:720", StringComparison.Ordinal),
     "Fallback GDI pode deformar ou desalinhar a janela");
+Check(gdiArguments.Contains("-threads:v", StringComparison.Ordinal) &&
+      gdiArguments.Contains("-filter_threads", StringComparison.Ordinal),
+    "Fallback por software voltou a ocupar todos os núcleos da máquina");
 Console.WriteLine("PASS captura: GPU direto sem cópia para RAM e fallbacks centralizados.");
 
 foreach (var quality in QualityOption.All)

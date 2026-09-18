@@ -13,6 +13,7 @@ internal sealed class AudioStreamer : IAsyncDisposable
     private WasapiRecorder? _recorder; private BufferedWaveProvider? _buffer; private CancellationTokenSource? _cts; private Task? _task;
     private readonly FixedFrameTimestampClock _timestampClock = new();
     private readonly SemaphoreSlim _dataReady = new(0, 1);
+    public bool IsRunning => _task is { IsCompleted: false };
     public event Action<byte[]>? PacketReady; public event Action<string>? Error;
 
     public async Task StartAsync(AudioMode mode, int sourcePid)
@@ -39,7 +40,14 @@ internal sealed class AudioStreamer : IAsyncDisposable
             _recorder.StartRecording();
             _cts = new CancellationTokenSource();
             var token = _cts.Token;
-            _task = Task.Run(() => EncodeLoop(token));
+            // O áudio não pode depender de uma thread do pool que o jogo consiga
+            // deixar sem tempo de CPU. A thread é dedicada e faz pouco trabalho:
+            // acorda a cada bloco de 20 ms e usa Opus de baixa complexidade.
+            _task = Task.Factory.StartNew(
+                () => EncodeLoop(token),
+                token,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
         }
         catch (Exception ex) { await StopAsync(); Error?.Invoke(ex.Message); }
     }
@@ -62,9 +70,10 @@ internal sealed class AudioStreamer : IAsyncDisposable
         }
         catch { }
     }
-    private async Task EncodeLoop(CancellationToken token)
+    private void EncodeLoop(CancellationToken token)
     {
         if (_buffer is null) return;
+        try { Thread.CurrentThread.Priority = ThreadPriority.AboveNormal; } catch { }
         using var encoder = OpusCodecFactory.CreateEncoder(Rate, Channels, OpusApplication.OPUS_APPLICATION_RESTRICTED_LOWDELAY);
         encoder.Bitrate = 128_000;
         encoder.Complexity = 3;
@@ -76,7 +85,7 @@ internal sealed class AudioStreamer : IAsyncDisposable
         {
             while (!token.IsCancellationRequested)
             {
-                if (_buffer.BufferedBytes < FrameBytes) { await _dataReady.WaitAsync(token); continue; }
+                if (_buffer.BufferedBytes < FrameBytes) { _dataReady.Wait(token); continue; }
 
                 // Se o encoder perder tempo de CPU, mantenha somente os 120 ms mais
                 // recentes. Enviar todo o áudio antigo faria a voz ficar atrás do vídeo.

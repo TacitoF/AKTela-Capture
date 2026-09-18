@@ -16,12 +16,17 @@ internal static class MediaClock
 // eles continuam separados pela duração real em vez de receber timestamps quase iguais.
 internal sealed class FixedFrameTimestampClock
 {
+    private const int MaxLagBeforeRebaseUs = 250_000;
     private long? _nextTimestampUs;
 
     public long Next(long nowUs, int durationUs)
     {
         if (durationUs <= 0) throw new ArgumentOutOfRangeException(nameof(durationUs));
-        var timestamp = _nextTimestampUs ?? nowUs;
+        // Preserve spacing when several frames are read in one stdout burst, but do
+        // not keep an old timeline after capture was genuinely paused for a while.
+        var timestamp = _nextTimestampUs is null || nowUs - _nextTimestampUs.Value > MaxLagBeforeRebaseUs
+            ? nowUs
+            : _nextTimestampUs.Value;
         _nextTimestampUs = timestamp + durationUs;
         return timestamp;
     }
