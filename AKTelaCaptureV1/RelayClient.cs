@@ -524,8 +524,8 @@ internal sealed class RelayClient : IAsyncDisposable
                     }
 
                     case "request-keyframe":
-                        KeyframeRequested?.Invoke(root.TryGetProperty("reason", out var reason) && reason.ValueKind == JsonValueKind.String
-                            ? reason.GetString() ?? "viewer-request"
+                        KeyframeRequested?.Invoke(root.TryGetProperty("reason", out var keyframeReason) && keyframeReason.ValueKind == JsonValueKind.String
+                            ? keyframeReason.GetString() ?? "viewer-request"
                             : "viewer-request");
                         break;
 
