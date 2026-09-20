@@ -6,8 +6,8 @@ namespace AKTelaCapture;
 
 internal static class FfmpegManager
 {
-    private const string DownloadUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-win64-gpl-9.0.zip";
-    private const string RequiredBuildId = "n9-gpu-pipeline-2026-09";
+    private const string DownloadUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip";
+    private const string RequiredBuildId = "master-gpu-pipeline-2026-09";
     private static readonly SemaphoreSlim Gate = new(1, 1);
     private static string ToolDir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AKTelaCapture", "tools");
     private static string BuildMarker => Path.Combine(ToolDir, "ffmpeg-build.txt");
