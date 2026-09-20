@@ -15,9 +15,82 @@ internal sealed record H264StreamInfo(int ProfileIdc, int Constraints, int Level
     };
 }
 
+/// <summary>
+/// A compacting byte buffer for the streaming parsers. Unlike List.RemoveRange,
+/// consuming a frame is O(1) and does not copy the remainder on every packet.
+/// </summary>
+internal sealed class StreamingByteBuffer
+{
+    private byte[] _data;
+    private int _start;
+    private int _end;
+
+    public StreamingByteBuffer(int initialCapacity) => _data = new byte[initialCapacity];
+
+    public int Length => _end - _start;
+    public ReadOnlySpan<byte> Span => new(_data, _start, Length);
+
+    public void Append(byte[] source, int length)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(length);
+        if (length > source.Length) throw new ArgumentOutOfRangeException(nameof(length));
+        EnsureWritable(length);
+        Buffer.BlockCopy(source, 0, _data, _end, length);
+        _end += length;
+    }
+
+    public byte[] SliceToArray(int offset, int length)
+    {
+        if ((uint)offset > (uint)Length || (uint)length > (uint)(Length - offset))
+            throw new ArgumentOutOfRangeException(nameof(length));
+        var result = new byte[length];
+        Buffer.BlockCopy(_data, _start + offset, result, 0, length);
+        return result;
+    }
+
+    public void Consume(int length)
+    {
+        if ((uint)length > (uint)Length) throw new ArgumentOutOfRangeException(nameof(length));
+        _start += length;
+        if (_start == _end) _start = _end = 0;
+    }
+
+    public void KeepTail(int length)
+    {
+        length = Math.Clamp(length, 0, Length);
+        Consume(Length - length);
+    }
+
+    private void EnsureWritable(int length)
+    {
+        if (length <= _data.Length - _end) return;
+
+        var current = Length;
+        if (_start > 0 && length <= _data.Length - current)
+        {
+            Buffer.BlockCopy(_data, _start, _data, 0, current);
+            _start = 0;
+            _end = current;
+            return;
+        }
+
+        var required = checked(current + length);
+        var capacity = _data.Length;
+        while (capacity < required) capacity = checked(capacity * 2);
+        var replacement = new byte[capacity];
+        Buffer.BlockCopy(_data, _start, replacement, 0, current);
+        _data = replacement;
+        _start = 0;
+        _end = current;
+    }
+}
+
 internal sealed class H264AccessUnitReader
 {
-    private readonly List<byte> _buffer = new(512 * 1024);
+    private const int MaxBufferedBytes = 4 * 1024 * 1024;
+    private const int TailBytesOnOverflow = 1024 * 1024;
+
+    private readonly StreamingByteBuffer _buffer = new(512 * 1024);
     private byte[]? _sps;
     private byte[]? _pps;
 
@@ -25,37 +98,40 @@ internal sealed class H264AccessUnitReader
 
     public IEnumerable<(byte[] Data, bool Keyframe)> Push(byte[] bytes, int length)
     {
-        for (var i = 0; i < length; i++) _buffer.Add(bytes[i]);
+        _buffer.Append(bytes, length);
         var output = new List<(byte[], bool)>();
 
         while (true)
         {
-            var first = FindAud(_buffer, 0);
+            var data = _buffer.Span;
+            var first = FindAud(data, 0);
             if (first < 0) break;
             if (first > 0)
             {
-                // Alguns encoders emitem SPS/PPS antes do primeiro AUD. Preserve esses parâmetros
-                // para que o primeiro IDR enviado no formato Annex B seja autocontido.
-                CacheSets(_buffer.GetRange(0, first).ToArray());
-                _buffer.RemoveRange(0, first);
+                // Some encoders emit SPS/PPS before the first AUD. Keep them so
+                // the first relayed IDR remains independently decodable.
+                CacheSets(data[..first]);
+                _buffer.Consume(first);
+                data = _buffer.Span;
             }
 
-            var next = FindAud(_buffer, 4);
+            var next = FindAud(data, 3);
             if (next < 0) break;
 
-            var unit = _buffer.GetRange(0, next).ToArray();
-            _buffer.RemoveRange(0, next);
-            CacheSets(unit);
-
-            var key = ContainsNal(unit, 5);
-            if (key && (!ContainsNal(unit, 7) || !ContainsNal(unit, 8)) && _sps is not null && _pps is not null)
+            var unit = _buffer.SliceToArray(0, next);
+            _buffer.Consume(next);
+            var nals = CacheSets(unit);
+            var keyframe = (nals & (1u << 5)) != 0;
+            var hasSps = (nals & (1u << 7)) != 0;
+            var hasPps = (nals & (1u << 8)) != 0;
+            if (keyframe && (!hasSps || !hasPps) && _sps is not null && _pps is not null)
                 unit = PrependSets(unit, _sps, _pps);
 
-            output.Add((unit, key));
+            output.Add((unit, keyframe));
         }
 
-        if (_buffer.Count > 4 * 1024 * 1024)
-            _buffer.RemoveRange(0, _buffer.Count - 1024 * 1024);
+        if (_buffer.Length > MaxBufferedBytes)
+            _buffer.KeepTail(TailBytesOnOverflow);
 
         return output;
     }
@@ -64,7 +140,7 @@ internal sealed class H264AccessUnitReader
     {
         for (var i = 0; i + 7 < data.Length; i++)
         {
-            var sc = StartCodeSpan(data, i);
+            var sc = StartCode(data, i);
             if (sc == 0) continue;
             var nal = i + sc;
             if (nal + 3 >= data.Length || (data[nal] & 0x1f) != 7) continue;
@@ -78,20 +154,41 @@ internal sealed class H264AccessUnitReader
         return null;
     }
 
-    private void CacheSets(byte[] data)
+    private uint CacheSets(ReadOnlySpan<byte> data)
     {
-        foreach (var nal in Nals(data))
+        uint flags = 0;
+        var searchFrom = 0;
+        while (true)
         {
-            if (nal.Type == 7)
+            var start = FindStartCode(data, searchFrom);
+            if (start < 0) break;
+            var startCodeLength = StartCode(data, start);
+            var header = start + startCodeLength;
+            if (header >= data.Length) break;
+
+            var next = FindStartCode(data, header + 1);
+            var end = next >= 0 ? next : data.Length;
+            var type = data[header] & 0x1f;
+            flags |= 1u << type;
+
+            if (type is 7 or 8)
             {
-                _sps = nal.Bytes;
-                StreamInfo = Inspect(nal.Bytes) ?? StreamInfo;
+                var copy = data[start..end].ToArray();
+                if (type == 7)
+                {
+                    _sps = copy;
+                    StreamInfo = Inspect(copy) ?? StreamInfo;
+                }
+                else
+                {
+                    _pps = copy;
+                }
             }
-            else if (nal.Type == 8)
-            {
-                _pps = nal.Bytes;
-            }
+
+            if (next < 0) break;
+            searchFrom = next;
         }
+        return flags;
     }
 
     private static byte[] PrependSets(byte[] unit, byte[] sps, byte[] pps)
@@ -103,51 +200,30 @@ internal sealed class H264AccessUnitReader
         return result;
     }
 
-    private static bool ContainsNal(byte[] data, int type) => Nals(data).Any(n => n.Type == type);
-
-    private static IEnumerable<(int Type, byte[] Bytes)> Nals(byte[] data)
+    private static int FindAud(ReadOnlySpan<byte> data, int start)
     {
-        var starts = new List<(int Start, int Type)>();
-        for (var i = 0; i + 3 < data.Length; i++)
+        var searchFrom = Math.Max(0, start);
+        while (true)
         {
-            var sc = StartCodeSpan(data, i);
-            if (sc == 0) continue;
-            var header = i + sc;
-            if (header < data.Length) starts.Add((i, data[header] & 0x1f));
-            i = header;
-        }
-
-        for (var i = 0; i < starts.Count; i++)
-        {
-            var end = i + 1 < starts.Count ? starts[i + 1].Start : data.Length;
-            var len = end - starts[i].Start;
-            var bytes = new byte[len];
-            Buffer.BlockCopy(data, starts[i].Start, bytes, 0, len);
-            yield return (starts[i].Type, bytes);
+            var position = FindStartCode(data, searchFrom);
+            if (position < 0) return -1;
+            var header = position + StartCode(data, position);
+            if (header < data.Length && (data[header] & 0x1f) == 9) return position;
+            searchFrom = header + 1;
         }
     }
 
-    private static int FindAud(List<byte> data, int start)
+    private static int FindStartCode(ReadOnlySpan<byte> data, int start)
     {
-        for (var i = Math.Max(0, start); i + 4 < data.Count; i++)
-        {
-            var sc = StartCodeList(data, i);
-            if (sc > 0 && i + sc < data.Count && (data[i + sc] & 0x1f) == 9) return i;
-        }
+        for (var i = Math.Max(0, start); i + 2 < data.Length; i++)
+            if (StartCode(data, i) != 0) return i;
         return -1;
     }
 
-    private static int StartCodeList(IReadOnlyList<byte> data, int i)
+    private static int StartCode(ReadOnlySpan<byte> data, int i)
     {
-        if (i + 2 < data.Count && data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1) return 3;
-        if (i + 3 < data.Count && data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 0 && data[i + 3] == 1) return 4;
-        return 0;
-    }
-
-    private static int StartCodeSpan(ReadOnlySpan<byte> data, int i)
-    {
-        if (i + 2 < data.Length && data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1) return 3;
         if (i + 3 < data.Length && data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 0 && data[i + 3] == 1) return 4;
+        if (i + 2 < data.Length && data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1) return 3;
         return 0;
     }
 }

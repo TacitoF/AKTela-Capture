@@ -4,6 +4,11 @@ namespace AKTelaCapture;
 
 internal sealed class VideoStreamer : IAsyncDisposable
 {
+    // FFmpeg otherwise creates roughly one worker per logical CPU for software
+    // filters/codecs. Keeping a small bounded pool leaves headroom for the game.
+    private static readonly int EncoderThreadCount = Math.Clamp((Environment.ProcessorCount + 3) / 4, 1, 4);
+    private static readonly int FilterThreadCount = Math.Clamp((Environment.ProcessorCount + 7) / 8, 1, 2);
+
     private Process? _process;
     private CancellationTokenSource? _cts;
     private Task? _task;
@@ -220,6 +225,8 @@ internal sealed class VideoStreamer : IAsyncDisposable
         var buffer = new byte[128 * 1024];
         var fpsClock = Stopwatch.StartNew();
         var framesThisSecond = 0;
+        var timestampClock = new FixedFrameTimestampClock();
+        var frameDurationUs = 1_000_000 / Math.Max(1, cfg.Fps);
         var validated = false;
         string? validationError = null;
         using var startupTimeout = CancellationTokenSource.CreateLinkedTokenSource(token);
@@ -254,7 +261,8 @@ internal sealed class VideoStreamer : IAsyncDisposable
                     framesThisSecond++;
                     Interlocked.Increment(ref _frames);
                     if (key) Interlocked.Increment(ref _keyframes);
-                    PacketReady?.Invoke(PacketProtocol.Create(MediaKind.Video, key, MediaClock.NowMicroseconds(), 1_000_000 / Math.Max(1, cfg.Fps), data));
+                    var timestampUs = timestampClock.Next(MediaClock.NowMicroseconds(), frameDurationUs);
+                    PacketReady?.Invoke(PacketProtocol.Create(MediaKind.Video, key, timestampUs, frameDurationUs, data));
                 }
 
                 if (validationError is not null) break;
@@ -297,6 +305,8 @@ internal sealed class VideoStreamer : IAsyncDisposable
         var buffer = new byte[128 * 1024];
         var fpsClock = Stopwatch.StartNew();
         var framesThisSecond = 0;
+        var timestampClock = new FixedFrameTimestampClock();
+        var frameDurationUs = 1_000_000 / Math.Max(1, cfg.Fps);
         var gotFrames = false;
         using var startupTimeout = CancellationTokenSource.CreateLinkedTokenSource(token);
         startupTimeout.CancelAfter(TimeSpan.FromSeconds(5));
@@ -314,7 +324,8 @@ internal sealed class VideoStreamer : IAsyncDisposable
                     framesThisSecond++;
                     Interlocked.Increment(ref _frames);
                     if (key) Interlocked.Increment(ref _keyframes);
-                    PacketReady?.Invoke(PacketProtocol.Create(MediaKind.Video, key, MediaClock.NowMicroseconds(), 1_000_000 / Math.Max(1, cfg.Fps), data));
+                    var timestampUs = timestampClock.Next(MediaClock.NowMicroseconds(), frameDurationUs);
+                    PacketReady?.Invoke(PacketProtocol.Create(MediaKind.Video, key, timestampUs, frameDurationUs, data));
                 }
                 UpdateFps(fpsClock, ref framesThisSecond);
             }
@@ -451,13 +462,20 @@ internal sealed class VideoStreamer : IAsyncDisposable
         }
     }
 
-    private static ProcessStartInfo Base(string exe) => new(exe)
+    private static ProcessStartInfo Base(string exe)
     {
-        UseShellExecute = false,
-        CreateNoWindow = true,
-        RedirectStandardOutput = true,
-        RedirectStandardError = true
-    };
+        var process = new ProcessStartInfo(exe)
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        Add(process,
+            "-filter_threads", FilterThreadCount.ToString(),
+            "-filter_complex_threads", FilterThreadCount.ToString());
+        return process;
+    }
 
     private static void ProtectGamePerformance(Process process)
     {
@@ -504,6 +522,9 @@ internal sealed class VideoStreamer : IAsyncDisposable
             "-filter_complex",
             $"gfxcapture=hwnd={hwnd}:capture_cursor=0:capture_border=1:display_border=0:" +
             $"max_framerate={cfg.Fps}:width={width}:height={height}:resize_mode=scale_aspect," +
+            // Windows.Graphics.Capture emits only when the compositor presents.
+            // fps duplicates/drops frame references to keep timestamps continuous.
+            $"fps={cfg.Fps}," +
             $"scale_d3d11=width={width}:height={height}:format=nv12");
     }
 
@@ -633,6 +654,7 @@ internal sealed class VideoStreamer : IAsyncDisposable
         var profile = ProfileName(cfg);
         Add(p,
             "-c:v", "libx264",
+            "-threads:v", EncoderThreadCount.ToString(),
             "-preset", "ultrafast",
             "-tune", "zerolatency",
             "-profile:v", profile,
@@ -662,6 +684,7 @@ internal sealed class VideoStreamer : IAsyncDisposable
         var bitrate = Math.Min(cfg.BitrateMbps, 5);
         Add(p,
             "-c:v", "libvpx",
+            "-threads:v", EncoderThreadCount.ToString(),
             "-deadline", "realtime",
             "-cpu-used", "8",
             "-lag-in-frames", "0",

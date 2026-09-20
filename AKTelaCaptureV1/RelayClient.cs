@@ -18,9 +18,9 @@ internal sealed class RelayClient : IAsyncDisposable
     // continua descartando o mais antigo em congestionamentos maiores, preservando
     // a prioridade e a baixa latência do vídeo.
     internal const int AudioCapacity = 8;
-    // 80 ms chegavam ao player como rajadas longas. Lotes de 40 ms mantêm a economia
-    // de mensagens no Relay, mas alimentam o buffer contínuo antes que ele se esvazie.
-    internal const int MediaBatchWindowMs = 40;
+    // Um bloco Opus tem 20 ms. Usar a mesma janela evita entregar dois ou três blocos
+    // de áudio em rajadas grandes quando a thread principal do espectador está ocupada.
+    internal const int MediaBatchWindowMs = 20;
 
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(4) };
 
@@ -72,8 +72,10 @@ internal sealed class RelayClient : IAsyncDisposable
     public event Action<int>? ViewerCountChanged;
     public event Action<long>? LatencyChanged;
     public event Action<AudienceCapabilities>? AudienceCapabilitiesChanged;
+    public event Action<ViewerDemand>? ViewerDemandChanged;
+    public event Action<ViewerHealth>? ViewerHealthChanged;
     public event Action<int, int, string>? RoomPolicyChanged;
-    public event Action? KeyframeRequested;
+    public event Action<string>? KeyframeRequested;
     public event Action<string>? PublisherRejected;
     public event Action<string>? Error;
     public event Action<RelayDiagnostics>? DiagnosticsChanged;
@@ -494,8 +496,37 @@ internal sealed class RelayClient : IAsyncDisposable
                         break;
                     }
 
+                    case "viewer-demand":
+                    {
+                        var demand = new ViewerDemand(
+                            root.TryGetProperty("viewers", out var total) ? Math.Max(0, total.GetInt32()) : ViewerCount,
+                            root.TryGetProperty("videoViewers", out var video) ? Math.Max(0, video.GetInt32()) : ViewerCount,
+                            root.TryGetProperty("audioViewers", out var audio) ? Math.Max(0, audio.GetInt32()) : ViewerCount);
+                        ViewerDemandChanged?.Invoke(demand);
+                        break;
+                    }
+
+                    case "viewer-health":
+                    {
+                        var health = new ViewerHealth(
+                            root.TryGetProperty("sampleAt", out var sampleAt) ? Math.Max(0, sampleAt.GetInt64()) : Environment.TickCount64,
+                            root.TryGetProperty("viewers", out var total) ? Math.Max(0, total.GetInt32()) : ViewerCount,
+                            root.TryGetProperty("reporting", out var reporting) ? Math.Max(0, reporting.GetInt32()) : 0,
+                            root.TryGetProperty("minDecodedFps", out var fps) ? Math.Max(0, fps.GetDouble()) : 0,
+                            root.TryGetProperty("maxDecodeQueue", out var queue) ? Math.Max(0, queue.GetInt32()) : 0,
+                            root.TryGetProperty("dropped", out var dropped) ? Math.Max(0, dropped.GetInt64()) : 0,
+                            root.TryGetProperty("resets", out var resets) ? Math.Max(0, resets.GetInt64()) : 0,
+                            root.TryGetProperty("audioBufferMs", out var buffered) ? Math.Max(0, buffered.GetInt32()) : 0,
+                            root.TryGetProperty("audioUnderflows", out var underflows) ? Math.Max(0, underflows.GetInt64()) : 0,
+                            root.TryGetProperty("stalled", out var stalled) && stalled.GetBoolean());
+                        ViewerHealthChanged?.Invoke(health);
+                        break;
+                    }
+
                     case "request-keyframe":
-                        KeyframeRequested?.Invoke();
+                        KeyframeRequested?.Invoke(root.TryGetProperty("reason", out var keyframeReason) && keyframeReason.ValueKind == JsonValueKind.String
+                            ? keyframeReason.GetString() ?? "viewer-request"
+                            : "viewer-request");
                         break;
 
                     case "pong" when root.TryGetProperty("sentAt", out var s) && s.TryGetInt64(out var sent):

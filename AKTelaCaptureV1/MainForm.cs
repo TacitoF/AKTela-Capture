@@ -50,13 +50,25 @@ internal sealed partial class MainForm : Form
     private AudienceCapabilities _audience = AudienceCapabilities.Default();
     private string _networkCapKey = "1080p60";
     private string _performanceCapKey = "1080p60";
+    private string _viewerCapKey = "1080p60";
     private string _roomCapKey = "1080p60";
+    private ViewerDemand _viewerDemand = ViewerDemand.None;
+    private ViewerHealth _viewerHealth = ViewerHealth.Empty;
+    private bool _viewerDemandKnown;
     private int _streamSlot;
     private int _activeStreams = 1;
     private long _lastDropSnapshot;
     private int _stableTicks;
     private int _lowFpsTicks;
+    private int _viewerPoorTicks;
+    private int _viewerStableTicks;
+    private long _lastViewerDrops;
+    private long _lastViewerResets;
+    private long _lastAudioUnderflows;
+    private long _viewerHealthRevision;
+    private long _lastEvaluatedViewerHealthRevision;
     private long _lastKeyframeRestartAt;
+    private int _keyframeRecoveryGeneration;
 
     private static readonly Color Bg = Color.FromArgb(16, 19, 25);
     private static readonly Color Surface = Color.FromArgb(24, 29, 37);
@@ -159,13 +171,24 @@ internal sealed partial class MainForm : Form
         _relay.ConnectionChanged += connected => Ui(() =>
         {
             _relayConnected = connected;
-            if (!connected && _sharing) _ = SyncMedia(0);
+            if (!connected)
+            {
+                _viewerDemandKnown = false;
+                _viewerDemand = ViewerDemand.None;
+                if (_sharing) _ = SyncMedia(0);
+            }
             RefreshStatus();
         });
 
         _relay.ViewerCountChanged += count => Ui(() =>
         {
             _viewerValue.Text = Math.Max(0, count).ToString();
+            if (count <= 0)
+            {
+                _viewerDemandKnown = false;
+                _viewerDemand = ViewerDemand.None;
+                _viewerHealth = ViewerHealth.Empty;
+            }
             RefreshStatus();
             if (count <= 0) _ = SyncMedia(0);
             else if (_audience.Ready) _ = SyncMedia(count);
@@ -180,6 +203,19 @@ internal sealed partial class MainForm : Form
             if (_sharing && caps.Viewers > 0 && caps.Ready) _ = NegotiateAndSync(caps.Viewers);
         });
 
+        _relay.ViewerDemandChanged += demand => Ui(() =>
+        {
+            _viewerDemand = demand;
+            _viewerDemandKnown = true;
+            if (_sharing) _ = SyncMedia(demand.Viewers);
+        });
+
+        _relay.ViewerHealthChanged += health => Ui(() =>
+        {
+            _viewerHealth = health;
+            _viewerHealthRevision = health.SampleAt;
+        });
+
         _relay.RoomPolicyChanged += (activeStreams, maxStreams, maxModeKey) => Ui(() =>
         {
             _activeStreams = activeStreams;
@@ -188,7 +224,7 @@ internal sealed partial class MainForm : Form
             if (_sharing) _ = ApplyEffectiveConfig("limite automático para múltiplas telas");
         });
 
-        _relay.KeyframeRequested += () => Ui(() => _ = RestartForKeyframe());
+        _relay.KeyframeRequested += reason => Ui(() => _ = RecoverForKeyframe(reason));
         // Antes, uma rajada de descartes só era percebida no próximo tick do timer de
         // 5s, deixando a imagem travada em quem assistia até lá. Reagir no próprio
         // evento de congestionamento reduz a qualidade quase imediatamente.
@@ -300,7 +336,9 @@ internal sealed partial class MainForm : Form
         var requestedKey = requested.Key;
         var audienceKey = _audience.Viewers > 0 ? _audience.ModeKey : requestedKey;
         var effectiveKey = QualityOption.Min(
-            QualityOption.Min(QualityOption.Min(QualityOption.Min(requestedKey, audienceKey), _networkCapKey), _performanceCapKey),
+            QualityOption.Min(
+                QualityOption.Min(QualityOption.Min(QualityOption.Min(requestedKey, audienceKey), _networkCapKey), _performanceCapKey),
+                _viewerCapKey),
             _roomCapKey);
 
         var codec = _audience.Viewers > 0 ? _audience.VideoCodec : "h264";
@@ -354,12 +392,25 @@ internal sealed partial class MainForm : Form
             _audience = AudienceCapabilities.Default();
             _networkCapKey = requested.Key;
             _performanceCapKey = requested.Key;
+            _viewerCapKey = requested.Key;
             _roomCapKey = "1080p60";
+            _viewerDemand = ViewerDemand.None;
+            _viewerHealth = ViewerHealth.Empty;
+            _viewerDemandKnown = false;
             _streamSlot = 0;
             _activeStreams = 1;
             _stableTicks = 0;
             _lowFpsTicks = 0;
+            _viewerPoorTicks = 0;
+            _viewerStableTicks = 0;
             _lastDropSnapshot = 0;
+            _lastViewerDrops = 0;
+            _lastViewerResets = 0;
+            _lastAudioUnderflows = 0;
+            _viewerHealthRevision = 0;
+            _lastEvaluatedViewerHealthRevision = 0;
+            _lastKeyframeRestartAt = 0;
+            Interlocked.Increment(ref _keyframeRecoveryGeneration);
 
             var initial = BuildEffectiveConfig(source, requested);
             _activeAudio = _audioCheck.Checked
@@ -477,7 +528,7 @@ internal sealed partial class MainForm : Form
             _outputValue.Text = $"{next.Width}×{next.Height}";
             _relay.UpdateStreamConfig(next);
 
-            if (_relay.ViewerCount > 0 && _relayConnected && _audience.Ready)
+            if (VideoViewerCount(_relay.ViewerCount) > 0 && _relayConnected && _audience.Ready)
             {
                 SetStatus(next.CompatibilityMode ? "Modo compatibilidade" : "Ajustando transmissão", Yellow, reason);
                 _cursor.Stop();
@@ -498,6 +549,12 @@ internal sealed partial class MainForm : Form
     private static bool SameVideoConfig(StreamConfig a, StreamConfig b) =>
         a.Width == b.Width && a.Height == b.Height && a.Fps == b.Fps && a.VideoCodec == b.VideoCodec && a.VideoProfile == b.VideoProfile && a.BitrateMbps == b.BitrateMbps;
 
+    private int VideoViewerCount(int total) =>
+        _viewerDemandKnown ? Math.Clamp(_viewerDemand.VideoViewers, 0, Math.Max(0, total)) : Math.Max(0, total);
+
+    private int AudioViewerCount(int total) =>
+        _viewerDemandKnown ? Math.Clamp(_viewerDemand.AudioViewers, 0, Math.Max(0, total)) : Math.Max(0, total);
+
     private async Task SyncMedia(int viewers)
     {
         await _mediaGate.WaitAsync();
@@ -512,17 +569,35 @@ internal sealed partial class MainForm : Form
                 return;
             }
 
-            // Não inicia vídeo antes de todos os espectadores anunciarem os codecs suportados.
-            if (!_audience.Ready) return;
-            if (_video.IsRunning) return;
             var source = _activeSource;
             var config = _activeConfig;
             if (source is null || config is null) return;
 
-            SetStatus(config.CompatibilityMode ? "Modo compatibilidade" : "Preparando vídeo", Yellow, "Sincronizando primeiro quadro-chave");
-            await _video.StartAsync(source, config);
-            if (_activeAudio != AudioMode.Off) await _audio.StartAsync(_activeAudio, source.ProcessId);
-            _cursor.Start(source, () => config.CursorPolicy == "Mostrar");
+            var videoViewers = VideoViewerCount(viewers);
+            var audioViewers = AudioViewerCount(viewers);
+
+            // A aba oculta e o áudio silenciado são sinalizados pelo Relay. Parar os
+            // pipelines de forma independente evita codificar mídia que ninguém usa.
+            if (videoViewers <= 0)
+            {
+                _cursor.Stop();
+                await _video.StopAsync();
+            }
+            else if (_audience.Ready && !_video.IsRunning)
+            {
+                SetStatus(config.CompatibilityMode ? "Modo compatibilidade" : "Preparando vídeo", Yellow, "Sincronizando primeiro quadro-chave");
+                await _video.StartAsync(source, config);
+                _cursor.Start(source, () => config.CursorPolicy == "Mostrar");
+            }
+
+            if (audioViewers <= 0 || _activeAudio == AudioMode.Off)
+            {
+                await _audio.StopAsync();
+            }
+            else if (!_audio.IsRunning)
+            {
+                await _audio.StartAsync(_activeAudio, source.ProcessId);
+            }
         }
         catch (Exception ex)
         {
@@ -534,18 +609,30 @@ internal sealed partial class MainForm : Form
         }
     }
 
-    private async Task RestartForKeyframe()
+    private async Task RecoverForKeyframe(string reason)
     {
-        if (!_sharing || !_relayConnected || _relay.ViewerCount <= 0 || !_video.IsRunning || _activeSource is null || _activeConfig is null) return;
+        if (!_sharing || !_relayConnected || VideoViewerCount(_relay.ViewerCount) <= 0 || !_video.IsRunning) return;
+
+        // Um IDR periódico sai a cada segundo. Aguarde-o antes de matar o processo:
+        // reiniciar FFmpeg/NVENC a cada solicitação era o maior pico sobre o jogo e
+        // permitia que vários espectadores prendessem a sessão em recuperação.
+        var generation = Interlocked.Increment(ref _keyframeRecoveryGeneration);
+        var keyframesBefore = _video.GetDiagnostics().Keyframes;
+        await Task.Delay(1600);
+        if (generation != Volatile.Read(ref _keyframeRecoveryGeneration)) return;
+        if (_video.GetDiagnostics().Keyframes > keyframesBefore) return;
+
         var now = Environment.TickCount64;
-        if (now - _lastKeyframeRestartAt < 1400) return;
-        _lastKeyframeRestartAt = now;
+        if (now - _lastKeyframeRestartAt < 8000) return;
 
         await _mediaGate.WaitAsync();
         try
         {
-            if (!_sharing || !_relayConnected || _relay.ViewerCount <= 0 || _activeSource is null || _activeConfig is null) return;
-            SetStatus("Sincronizando vídeo", Yellow, "Novo quadro-chave solicitado pelo espectador");
+            if (!_sharing || !_relayConnected || VideoViewerCount(_relay.ViewerCount) <= 0 ||
+                !_video.IsRunning || _activeSource is null || _activeConfig is null) return;
+            if (_video.GetDiagnostics().Keyframes > keyframesBefore) return;
+            _lastKeyframeRestartAt = Environment.TickCount64;
+            SetStatus("Sincronizando vídeo", Yellow, $"Encoder sem novo quadro-chave ({reason})");
             await _video.RestartAsync(_activeSource, _activeConfig);
         }
         finally
@@ -576,6 +663,17 @@ internal sealed partial class MainForm : Form
         var drops = diagnostics.VideoDropped;
         var deltaDrops = Math.Max(0, drops - _lastDropSnapshot);
         _lastDropSnapshot = drops;
+        var newViewerHealth = _viewerHealthRevision != _lastEvaluatedViewerHealthRevision;
+        var viewerDrops = newViewerHealth ? Math.Max(0, _viewerHealth.Dropped - _lastViewerDrops) : 0;
+        var viewerResets = newViewerHealth ? Math.Max(0, _viewerHealth.Resets - _lastViewerResets) : 0;
+        var audioUnderflows = newViewerHealth ? Math.Max(0, _viewerHealth.AudioUnderflows - _lastAudioUnderflows) : 0;
+        if (newViewerHealth)
+        {
+            _lastEvaluatedViewerHealthRevision = _viewerHealthRevision;
+            _lastViewerDrops = _viewerHealth.Dropped;
+            _lastViewerResets = _viewerHealth.Resets;
+            _lastAudioUnderflows = _viewerHealth.AudioUnderflows;
+        }
 
         if (VideoStreamer.IsSoftwareEncoder(video.Encoder) && QualityOption.Rank(_performanceCapKey) > QualityOption.Rank("720p30"))
         {
@@ -595,6 +693,48 @@ internal sealed partial class MainForm : Form
             {
                 _performanceCapKey = lowered;
                 await ApplyEffectiveConfig("máquina sobrecarregada; resolução reduzida para proteger o jogo");
+                return;
+            }
+        }
+
+        // A qualidade só é reduzida para o espectador depois de duas medições ruins
+        // consecutivas. Isso diferencia decoder realmente sobrecarregado de um GC,
+        // troca de aba ou pico isolado, evitando a antiga imagem "indo e voltando".
+        var viewerReporting = _viewerHealth.Reporting > 0 && VideoViewerCount(_relay.ViewerCount) > 0;
+        var viewerQueueLimit = Math.Max(12, (active?.Fps ?? 30) / 3);
+        var viewerOverload = viewerReporting && (
+            _viewerHealth.Stalled ||
+            _viewerHealth.MaxDecodeQueue >= viewerQueueLimit ||
+            viewerResets > 0 ||
+            viewerDrops >= Math.Max(4, (active?.Fps ?? 30) / 4) ||
+            (_viewerHealth.MinDecodedFps > 0 && active is not null && _viewerHealth.MinDecodedFps < active.Fps * 0.55));
+        if (newViewerHealth) _viewerPoorTicks = viewerOverload ? _viewerPoorTicks + 1 : 0;
+
+        if (_viewerPoorTicks >= 2)
+        {
+            _viewerPoorTicks = 0;
+            _viewerStableTicks = 0;
+            var lowered = QualityOption.LowerForPerformance(_viewerCapKey);
+            if (lowered != _viewerCapKey)
+            {
+                _viewerCapKey = lowered;
+                await ApplyEffectiveConfig("decoder do espectador sobrecarregado; ajuste gradual");
+                return;
+            }
+        }
+
+        var viewerStable = viewerReporting && !viewerOverload && audioUnderflows == 0 &&
+            _viewerHealth.MaxDecodeQueue <= 4 &&
+            active is not null && _viewerHealth.MinDecodedFps >= active.Fps * 0.85;
+        if (newViewerHealth) _viewerStableTicks = viewerStable ? _viewerStableTicks + 1 : 0;
+        if (_viewerStableTicks >= 12)
+        {
+            _viewerStableTicks = 0;
+            var raised = QualityOption.HigherOneStep(_viewerCapKey, requested.Key);
+            if (raised != _viewerCapKey)
+            {
+                _viewerCapKey = raised;
+                await ApplyEffectiveConfig("decoder estável; qualidade restaurada gradualmente");
                 return;
             }
         }
@@ -655,10 +795,24 @@ internal sealed partial class MainForm : Form
         _activeConfig = null;
         _audience = AudienceCapabilities.Default();
         _performanceCapKey = "1080p60";
+        _networkCapKey = "1080p60";
+        _viewerCapKey = "1080p60";
         _roomCapKey = "1080p60";
+        _viewerDemand = ViewerDemand.None;
+        _viewerHealth = ViewerHealth.Empty;
+        _viewerDemandKnown = false;
         _streamSlot = 0;
         _activeStreams = 1;
         _lowFpsTicks = 0;
+        _viewerPoorTicks = 0;
+        _viewerStableTicks = 0;
+        _lastViewerDrops = 0;
+        _lastViewerResets = 0;
+        _lastAudioUnderflows = 0;
+        _viewerHealthRevision = 0;
+        _lastEvaluatedViewerHealthRevision = 0;
+        _lastKeyframeRestartAt = 0;
+        Interlocked.Increment(ref _keyframeRecoveryGeneration);
         _outputValue.Text = "—";
         _fpsValue.Text = "—";
         _encoderValue.Text = "—";
@@ -784,6 +938,7 @@ internal sealed partial class MainForm : Form
             $"Relay: {(relay.Connected ? "conectado" : "desconectado")}",
             $"Ping: {relay.LatencyMs} ms",
             $"Espectadores: {relay.Viewers}",
+            $"Demanda: vídeo {VideoViewerCount(relay.Viewers)} · áudio {AudioViewerCount(relay.Viewers)}",
             $"Reconexões: {relay.Reconnects}",
             $"Saída: {(config is null ? "—" : $"{config.Width}×{config.Height} @ {config.Fps} FPS")}",
             $"Codec: {video.Codec} {video.Profile} ({video.CodecString})",
@@ -791,6 +946,7 @@ internal sealed partial class MainForm : Form
             $"FPS real: {video.Fps:0.0}",
             $"Bitrate alvo: {(config is null ? "—" : $"{config.BitrateMbps} Mbps")}",
             $"Limite da máquina: {_performanceCapKey}",
+            $"Limite do espectador: {_viewerCapKey}",
             $"Frames: {video.Frames}",
             $"Keyframes: {video.Keyframes}",
             $"Reinícios de encoder: {video.Restarts}",
@@ -800,6 +956,9 @@ internal sealed partial class MainForm : Form
             $"Áudio enviado: {relay.AudioSent}",
             $"Áudio descartado: {relay.AudioDropped}",
             $"Fila áudio: {relay.AudioQueue}",
+            $"Saúde do espectador: {_viewerHealth.Reporting}/{_viewerHealth.Viewers} · {_viewerHealth.MinDecodedFps:0.0} FPS · fila {_viewerHealth.MaxDecodeQueue}",
+            $"Recuperações/descartes no player: {_viewerHealth.Resets}/{_viewerHealth.Dropped}",
+            $"Buffer/underflows de áudio: {_viewerHealth.AudioBufferMs} ms/{_viewerHealth.AudioUnderflows}",
             $"Negociação: {_audience.ModeKey} · {_audience.VideoCodec}/{_audience.VideoProfile} · {_audience.Reason}",
             string.IsNullOrWhiteSpace(relay.LastError) ? "Último erro: —" : $"Último erro: {relay.LastError}"
         });

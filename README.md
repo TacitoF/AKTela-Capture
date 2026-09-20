@@ -1,7 +1,14 @@
-# AKTela Capture 2.7.0
+# AKTela Capture 2.8.0
 
 Interface redesenhada e correções de estabilidade para transmissão em tempo real.
 
+- A captura moderna de janelas agora passa pelo filtro fps, mantendo a cadência estável mesmo quando o compositor não produz frames.
+- Pedidos de keyframe aguardam o IDR periódico antes de reiniciar o FFmpeg e têm cooldown de segurança, eliminando tempestades de NVENC.
+- Vídeo e áudio param de forma independente quando nenhum espectador realmente os consome.
+- Telemetria do player só reduz o modo após amostras ruins consecutivas e restaura a qualidade gradualmente quando o decoder estabiliza.
+- Os parsers H.264/IVF usam buffer indexado em vez de mover o restante dos bytes a cada frame, reduzindo cópias e coleta de lixo.
+- Fallbacks libx264/VP8 e filtros têm número de threads limitado; o jogo mantém núcleos livres sem alterar resolução ou bitrate.
+- O encoder Opus usa uma thread dedicada e os lotes de áudio seguem os blocos de 20 ms, evitando cortes causados por starvation ou rajadas.
 - O perfil `Jogo` agora usa 720p e 60 FPS por padrão, processando 56% menos pixels que 1080p60 sem perder fluidez.
 - NVENC tenta primeiro manter captura, conversão e redimensionamento em superfícies D3D11, sem copiar cada frame para a RAM.
 - Drivers incompatíveis voltam automaticamente para os caminhos estáveis com cópia, Media Foundation ou software.
@@ -9,16 +16,16 @@ Interface redesenhada e correções de estabilidade para transmissão em tempo r
 - Encoder H.264/VP8 por software ativa 720p30 automaticamente para não disputar CPU com o jogo.
 - O FFmpeg executa abaixo da prioridade normal e o áudio deixa de consultar o buffer a cada 3 ms.
 
-- O relógio do áudio agora avança pelas amostras codificadas, evitando sobreposição quando os pacotes são processados em rajadas.
+- O relógio de vídeo e áudio avança pela duração dos frames, evitando sobreposição em rajadas, e reancora após uma interrupção real.
 - A fila de envio preserva somente o áudio recente durante congestionamentos, mantendo o vídeo como prioridade e evitando som atrasado.
-- Os lotes de mídia foram reduzidos de 80 ms para 40 ms, alimentando o player com áudio mais uniforme.
+- Os lotes de mídia foram reduzidos para 20 ms, alimentando o player com áudio uniforme.
 - A fila de áudio tolera oscilações breves de até 160 ms sem eliminar imediatamente um bloco Opus.
 
 - Até três Captures podem transmitir na mesma Activity, cada um ocupando uma tela independente.
 - Quando houver duas ou três telas, o Capture limita automaticamente cada transmissão a 720p e 30 FPS para reduzir banda, CPU e custo no Relay.
 - O status identifica a posição da transmissão (`Tela 1/3`, `Tela 2/3` ou `Tela 3/3`).
 - O nome editável do transmissor acompanha cada tela na Activity.
-- Vídeo e áudio são agrupados em lotes de 40 ms, reduzindo em cerca de 3 vezes as mensagens contabilizadas pela Cloudflare.
+- Vídeo e áudio do mesmo intervalo de 20 ms ainda são agrupados, sem acumular vários blocos Opus em uma rajada.
 - A captura de janela usa `gfxcapture`/Windows.Graphics.Capture com o `HWND` selecionado, evitando quadros pretos em jogos e aplicativos acelerados por GPU.
 - Janelas mantêm a proporção original e ficam centralizadas no vídeo, sem corte ou deformação; bordas visíveis são calculadas pelo DWM.
 - O FFmpeg antigo em cache é atualizado automaticamente para uma compilação com `gfxcapture` e `scale_d3d11`.
