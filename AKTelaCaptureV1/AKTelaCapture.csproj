@@ -8,9 +8,9 @@
     <AssemblyName>AKTela Capture</AssemblyName>
     <RootNamespace>AKTelaCapture</RootNamespace>
     <Product>AKTela Capture</Product>
-    <Version>2.8.0</Version>
-    <AssemblyVersion>2.8.0.0</AssemblyVersion>
-    <FileVersion>2.8.0.0</FileVersion>
+    <Version>2.9.0</Version>
+    <AssemblyVersion>2.9.0.0</AssemblyVersion>
+    <FileVersion>2.9.0.0</FileVersion>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ApplicationIcon>Assets\AKTela.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
@@ -37,6 +37,7 @@
     <Compile Include="VideoPacketQueue.cs" />
     <Compile Include="Models.cs" />
     <Compile Include="PacketProtocol.cs" />
+    <Compile Include="PerformanceQualityPolicy.cs" />
     <Compile Include="ProcessTreeHelper.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="RelayClient.cs" />

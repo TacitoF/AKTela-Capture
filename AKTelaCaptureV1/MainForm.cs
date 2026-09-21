@@ -49,7 +49,7 @@ internal sealed partial class MainForm : Form
     private string _preset = "Leve";
     private AudienceCapabilities _audience = AudienceCapabilities.Default();
     private string _networkCapKey = "1080p60";
-    private string _performanceCapKey = "1080p60";
+    private readonly PerformanceQualityPolicy _performanceQuality = new();
     private string _viewerCapKey = "1080p60";
     private string _roomCapKey = "1080p60";
     private ViewerDemand _viewerDemand = ViewerDemand.None;
@@ -59,7 +59,6 @@ internal sealed partial class MainForm : Form
     private int _activeStreams = 1;
     private long _lastDropSnapshot;
     private int _stableTicks;
-    private int _lowFpsTicks;
     private int _viewerPoorTicks;
     private int _viewerStableTicks;
     private long _lastViewerDrops;
@@ -337,7 +336,7 @@ internal sealed partial class MainForm : Form
         var audienceKey = _audience.Viewers > 0 ? _audience.ModeKey : requestedKey;
         var effectiveKey = QualityOption.Min(
             QualityOption.Min(
-                QualityOption.Min(QualityOption.Min(QualityOption.Min(requestedKey, audienceKey), _networkCapKey), _performanceCapKey),
+                QualityOption.Min(QualityOption.Min(QualityOption.Min(requestedKey, audienceKey), _networkCapKey), _performanceQuality.LimitKey),
                 _viewerCapKey),
             _roomCapKey);
 
@@ -391,7 +390,7 @@ internal sealed partial class MainForm : Form
             _publisherBlocked = false;
             _audience = AudienceCapabilities.Default();
             _networkCapKey = requested.Key;
-            _performanceCapKey = requested.Key;
+            _performanceQuality.Reset(requested.Key);
             _viewerCapKey = requested.Key;
             _roomCapKey = "1080p60";
             _viewerDemand = ViewerDemand.None;
@@ -400,7 +399,6 @@ internal sealed partial class MainForm : Form
             _streamSlot = 0;
             _activeStreams = 1;
             _stableTicks = 0;
-            _lowFpsTicks = 0;
             _viewerPoorTicks = 0;
             _viewerStableTicks = 0;
             _lastDropSnapshot = 0;
@@ -459,7 +457,7 @@ internal sealed partial class MainForm : Form
                 {
                     // Não deixe uma máquina sem encoder de hardware iniciar jogos em
                     // 60 FPS por software. Isso protege imediatamente o FPS do jogo.
-                    _performanceCapKey = "720p30";
+                    _performanceQuality.LimitForSoftware();
                     initial = BuildEffectiveConfig(source, requested);
                     _outputValue.Text = $"{initial.Width}×{initial.Height}";
                 }
@@ -675,26 +673,19 @@ internal sealed partial class MainForm : Form
             _lastAudioUnderflows = _viewerHealth.AudioUnderflows;
         }
 
-        if (VideoStreamer.IsSoftwareEncoder(video.Encoder) && QualityOption.Rank(_performanceCapKey) > QualityOption.Rank("720p30"))
+        var previousPerformanceLimit = _performanceQuality.LimitKey;
+        var locallyHealthy = deltaDrops == 0 && viewerResets == 0 && audioUnderflows == 0 &&
+            (!_viewerHealth.Stalled || _viewerHealth.Reporting == 0);
+        if (active is not null && _performanceQuality.Evaluate(
+            requested.Key, active.QualityKey, active.Fps, video.Fps,
+            _video.IsRunning && VideoViewerCount(_relay.ViewerCount) > 0,
+            VideoStreamer.IsSoftwareEncoder(video.Encoder), locallyHealthy, Environment.TickCount64))
         {
-            _lowFpsTicks = 0;
-            _performanceCapKey = "720p30";
-            await ApplyEffectiveConfig("encoder por software; modo leve ativado para proteger o jogo");
+            var recovering = QualityOption.Rank(_performanceQuality.LimitKey) > QualityOption.Rank(previousPerformanceLimit);
+            await ApplyEffectiveConfig(recovering
+                ? "máquina estável; qualidade restaurada gradualmente"
+                : "máquina sobrecarregada; modo leve ativado para proteger o jogo");
             return;
-        }
-
-        var localOverload = active is not null && _video.IsRunning && video.Fps > 0 && video.Fps < active.Fps * 0.82;
-        _lowFpsTicks = localOverload ? _lowFpsTicks + 1 : 0;
-        if (_lowFpsTicks >= 2)
-        {
-            _lowFpsTicks = 0;
-            var lowered = QualityOption.LowerForPerformance(_performanceCapKey);
-            if (lowered != _performanceCapKey)
-            {
-                _performanceCapKey = lowered;
-                await ApplyEffectiveConfig("máquina sobrecarregada; resolução reduzida para proteger o jogo");
-                return;
-            }
         }
 
         // A qualidade só é reduzida para o espectador depois de duas medições ruins
@@ -794,7 +785,7 @@ internal sealed partial class MainForm : Form
         _activeSource = null;
         _activeConfig = null;
         _audience = AudienceCapabilities.Default();
-        _performanceCapKey = "1080p60";
+        _performanceQuality.Reset("1080p60");
         _networkCapKey = "1080p60";
         _viewerCapKey = "1080p60";
         _roomCapKey = "1080p60";
@@ -803,7 +794,6 @@ internal sealed partial class MainForm : Form
         _viewerDemandKnown = false;
         _streamSlot = 0;
         _activeStreams = 1;
-        _lowFpsTicks = 0;
         _viewerPoorTicks = 0;
         _viewerStableTicks = 0;
         _lastViewerDrops = 0;
@@ -945,7 +935,7 @@ internal sealed partial class MainForm : Form
             $"Encoder: {video.Encoder}",
             $"FPS real: {video.Fps:0.0}",
             $"Bitrate alvo: {(config is null ? "—" : $"{config.BitrateMbps} Mbps")}",
-            $"Limite da máquina: {_performanceCapKey}",
+            $"Limite da máquina: {_performanceQuality.LimitKey}",
             $"Limite do espectador: {_viewerCapKey}",
             $"Frames: {video.Frames}",
             $"Keyframes: {video.Keyframes}",

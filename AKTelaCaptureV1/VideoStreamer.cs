@@ -24,6 +24,7 @@ internal sealed class VideoStreamer : IAsyncDisposable
     private string _codec = "—";
     private string _profile = "—";
     private string _codecString = "—";
+    private string? _preferredCapturePath;
 
     public bool IsRunning => _task is { IsCompleted: false };
 
@@ -132,6 +133,7 @@ internal sealed class VideoStreamer : IAsyncDisposable
             var attempts = cfg.VideoCodec == "vp8"
                 ? Vp8Attempts(ffmpeg, source, cfg)
                 : H264Attempts(ffmpeg, source, cfg);
+            attempts = attempts.OrderBy(attempt => attempt.Name == _preferredCapturePath ? 0 : 1).ToList();
 
             var errors = new List<string>();
             foreach (var attempt in attempts)
@@ -161,6 +163,7 @@ internal sealed class VideoStreamer : IAsyncDisposable
             return
             [
                 ("NVENC · GPU direto · captura moderna de janela", BuildGfxNvencGpu(ffmpeg, source, cfg)),
+                ("Media Foundation · GPU direto · captura moderna de janela", BuildGfxMfGpu(ffmpeg, source, cfg)),
                 ("NVENC · captura moderna de janela", BuildGfxNvenc(ffmpeg, source, cfg)),
                 ("Media Foundation · captura moderna de janela", BuildGfxMf(ffmpeg, source, cfg)),
                 ("Software H.264 · captura moderna de janela", BuildGfxX264(ffmpeg, source, cfg)),
@@ -178,7 +181,10 @@ internal sealed class VideoStreamer : IAsyncDisposable
         // direto deformaria a imagem; nesses casos usamos o fallback que preserva a
         // proporção e centraliza o conteúdo.
         if (HasCompatibleAspectRatio(source, cfg))
+        {
             displayAttempts.Add(("NVENC · GPU direto · Desktop Duplication", BuildDdaNvenc(ffmpeg, source, cfg, true)));
+            displayAttempts.Add(("Media Foundation · GPU direto · Desktop Duplication", BuildDdaMfGpu(ffmpeg, source, cfg)));
+        }
         displayAttempts.AddRange(
         [
             ("NVENC · Desktop Duplication", BuildDdaNvenc(ffmpeg, source, cfg, false)),
@@ -254,6 +260,7 @@ internal sealed class VideoStreamer : IAsyncDisposable
                         }
 
                         validated = true;
+                        _preferredCapturePath = name;
                         SetCodec("h264", info.ProfileName, info.CodecString);
                     }
 
@@ -721,6 +728,15 @@ internal sealed class VideoStreamer : IAsyncDisposable
         return p;
     }
 
+    private static ProcessStartInfo BuildDdaMfGpu(string exe, CaptureSource src, StreamConfig cfg)
+    {
+        var p = Base(exe);
+        DdaInput(p, src, cfg);
+        Add(p, "-vf", $"scale_d3d11=width={Even(cfg.Width)}:height={Even(cfg.Height)}:format=nv12");
+        Mf(p, cfg);
+        return p;
+    }
+
     private static ProcessStartInfo BuildGdiNvenc(string exe, CaptureSource src, StreamConfig cfg)
     {
         var p = Base(exe);
@@ -786,6 +802,14 @@ internal sealed class VideoStreamer : IAsyncDisposable
     {
         var p = Base(exe);
         GfxInput(p, src, cfg, "nv12");
+        Mf(p, cfg);
+        return p;
+    }
+
+    private static ProcessStartInfo BuildGfxMfGpu(string exe, CaptureSource src, StreamConfig cfg)
+    {
+        var p = Base(exe);
+        GfxInputGpu(p, src, cfg);
         Mf(p, cfg);
         return p;
     }
