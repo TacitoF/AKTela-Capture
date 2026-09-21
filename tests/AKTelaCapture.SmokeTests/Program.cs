@@ -19,6 +19,33 @@ Check(VideoStreamer.IsSoftwareEncoder("Software H.264") &&
     "Detecção de encoder por software está incorreta");
 Console.WriteLine("PASS proteção do jogo: redução 1080p60 → 720p60 → 720p30 e detecção de software.");
 
+var performance = new PerformanceQualityPolicy();
+performance.Reset("1080p60");
+Check(!performance.Evaluate("1080p60", "1080p60", 60, 40, true, false, true, 0),
+    "Um pico isolado reduziu a qualidade");
+Check(performance.Evaluate("1080p60", "1080p60", 60, 40, true, false, true, 5000) && performance.LimitKey == "720p60",
+    "Sobrecarga consecutiva não protegeu o jogo");
+for (long now = 10_000; now < 70_000; now += 5000)
+    Check(!performance.Evaluate("1080p60", "720p60", 60, 60, true, false, true, now),
+        "Qualidade restaurada sem estabilidade suficiente");
+Check(performance.Evaluate("1080p60", "720p60", 60, 60, true, false, true, 70_000) && performance.LimitKey == "1080p60",
+    "Qualidade não voltou após um minuto estável");
+performance.LimitForSoftware();
+for (long now = 80_000; now <= 180_000; now += 5000)
+    performance.Evaluate("1080p60", "720p30", 30, 30, true, true, true, now);
+Check(performance.LimitKey == "720p30", "Encoder por software perdeu sua proteção de CPU");
+performance.Reset("720p60");
+performance.Evaluate("720p60", "720p60", 60, 40, true, false, true, 0);
+performance.Evaluate("720p60", "720p60", 60, 40, true, false, true, 5000);
+performance.Evaluate("720p60", "720p30", 30, 30, true, false, true, 10_000);
+performance.Evaluate("720p60", "720p30", 30, 0, false, false, true, 65_000);
+Check(!performance.Evaluate("720p60", "720p30", 30, 30, true, false, true, 80_000),
+    "Tempo pausado foi contado como estabilidade");
+Check(QualityOption.HigherForPerformance("720p30", "1080p60") == "720p60" &&
+      QualityOption.HigherForPerformance("720p60", "1080p60") == "1080p60",
+    "Recuperação de qualidade sacrificou os 60 FPS");
+Console.WriteLine("PASS adaptação local: recuperação gradual, pausa e proteção de software.");
+
 // Exercise overflow with real AKV5 packets: never emit a dependent delta after loss.
 var queue = new VideoPacketQueue(2);
 byte[] Packet(bool key) => PacketProtocol.Create(MediaKind.Video, key, 0, 33333, new byte[] { 1 });
@@ -99,6 +126,17 @@ var ddaGpuArguments = string.Join("\n", ddaGpuProcess.ArgumentList);
 Check(ddaGpuArguments.Contains("scale_d3d11=", StringComparison.Ordinal) &&
       !ddaGpuArguments.Contains("hwdownload", StringComparison.Ordinal),
     "Caminho rápido da tela ainda transfere cada frame para a RAM");
+foreach (var (builder, source) in new[] { ("BuildGfxMfGpu", windowSource), ("BuildDdaMfGpu", displaySource) })
+{
+    var process = (ProcessStartInfo)Method(builder, BindingFlags.Static)
+        .Invoke(null, new object[] { ffmpeg, source, windowConfig })!;
+    var arguments = string.Join("\n", process.ArgumentList);
+    Check(arguments.Contains("scale_d3d11=", StringComparison.Ordinal) &&
+          arguments.Contains("h264_mf", StringComparison.Ordinal) &&
+          arguments.Contains("-hw_encoding\n1", StringComparison.Ordinal) &&
+          !arguments.Contains("hwdownload", StringComparison.Ordinal),
+        "Media Foundation não manteve captura/escala em superfícies da GPU");
+}
 var ultrawideSource = displaySource with { Bounds = new Rectangle(0, 0, 3440, 1440) };
 Check(VideoStreamer.HasCompatibleAspectRatio(displaySource, windowConfig) &&
       !VideoStreamer.HasCompatibleAspectRatio(ultrawideSource, windowConfig),

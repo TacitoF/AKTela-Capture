@@ -11,6 +11,7 @@
     <Compile Include="../../AKTelaCaptureV1/VideoPacketQueue.cs" Link="Production/VideoPacketQueue.cs" />
     <Compile Include="../../AKTelaCaptureV1/VideoStreamer.cs" Link="Production/VideoStreamer.cs" />
     <Compile Include="../../AKTelaCaptureV1/Models.cs" Link="Production/Models.cs" />
+    <Compile Include="../../AKTelaCaptureV1/PerformanceQualityPolicy.cs" Link="Production/PerformanceQualityPolicy.cs" />
     <Compile Include="../../AKTelaCaptureV1/FfmpegManager.cs" Link="Production/FfmpegManager.cs" />
     <Compile Include="../../AKTelaCaptureV1/H264AccessUnitReader.cs" Link="Production/H264AccessUnitReader.cs" />
     <Compile Include="../../AKTelaCaptureV1/IvfFrameReader.cs" Link="Production/IvfFrameReader.cs" />

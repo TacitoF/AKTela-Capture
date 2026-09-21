@@ -54,6 +54,14 @@ internal sealed record QualityOption(string Key, string Label, int Width, int He
         _ => key
     };
 
+    public static string HigherForPerformance(string key, string ceiling) => key switch
+    {
+        "720p30" when ceiling is "720p60" or "1080p60" => "720p60",
+        "720p30" when ceiling == "1080p30" => "1080p30",
+        "720p60" when ceiling == "1080p60" => "1080p60",
+        _ => key
+    };
+
     public static string Min(string a, string b) => Rank(a) <= Rank(b) ? a : b;
 }
 

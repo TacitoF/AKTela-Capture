@@ -1,7 +1,10 @@
-# AKTela Capture 2.8.0
+# AKTela Capture 2.9.0
 
 Interface redesenhada e correções de estabilidade para transmissão em tempo real.
 
+- Restaura a qualidade um nível por vez após um minuto de estabilidade da máquina; períodos pausados não contam e o encoder por software mantém a proteção em 720p30.
+- Tenta captura e escala diretamente na GPU também com Media Foundation, ampliando o caminho sem cópia para a RAM além do NVENC. Drivers incompatíveis usam os fallbacks existentes.
+- Reutiliza primeiro o caminho de captura que já funcionou durante ajustes de qualidade, evitando repetir tentativas incompatíveis.
 - A captura moderna de janelas agora passa pelo filtro fps, mantendo a cadência estável mesmo quando o compositor não produz frames.
 - Pedidos de keyframe aguardam o IDR periódico antes de reiniciar o FFmpeg e têm cooldown de segurança, eliminando tempestades de NVENC.
 - Vídeo e áudio param de forma independente quando nenhum espectador realmente os consome.
@@ -22,7 +25,7 @@ Interface redesenhada e correções de estabilidade para transmissão em tempo r
 - A fila de áudio tolera oscilações breves de até 160 ms sem eliminar imediatamente um bloco Opus.
 
 - Até três Captures podem transmitir na mesma Activity, cada um ocupando uma tela independente.
-- Quando houver duas ou três telas, o Capture limita automaticamente cada transmissão a 720p e 30 FPS para reduzir banda, CPU e custo no Relay.
+- A qualidade de cada transmissão acompanha quem está assistindo: a grade solicita 720p30 e uma tela destacada pode recuperar a qualidade selecionada quando nenhum espectador da mesma transmissão precisa do limite da grade.
 - O status identifica a posição da transmissão (`Tela 1/3`, `Tela 2/3` ou `Tela 3/3`).
 - O nome editável do transmissor acompanha cada tela na Activity.
 - Vídeo e áudio do mesmo intervalo de 20 ms ainda são agrupados, sem acumular vários blocos Opus em uma rajada.

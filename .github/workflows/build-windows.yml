@@ -69,7 +69,7 @@ jobs:
       - name: Publicar artefato
         uses: actions/upload-artifact@v6
         with:
-          name: AKTela-Capture-v2.8.0-Windows-x64
+          name: AKTela-Capture-v2.9.0-Windows-x64
           path: publish/AKTela Capture.exe
           if-no-files-found: error
 
@@ -82,7 +82,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v7
         with:
-          name: AKTela-Capture-v2.8.0-Windows-x64
+          name: AKTela-Capture-v2.9.0-Windows-x64
           path: release
       - name: Publicar versão testada
         env:
@@ -92,6 +92,6 @@ jobs:
         run: |
           cd release
           mv 'AKTela Capture.exe' AKTela-Capture.exe
-          zip -9 AKTela-Capture-v2.8.0-Windows-x64.zip AKTela-Capture.exe
-          sha256sum AKTela-Capture.exe AKTela-Capture-v2.8.0-Windows-x64.zip > SHA256SUMS.txt
-          gh release create v2.8.0 AKTela-Capture.exe AKTela-Capture-v2.8.0-Windows-x64.zip SHA256SUMS.txt --target "$COMMIT_SHA" --title 'AKTela Capture 2.8.0' --notes 'Estabiliza jogos e espectadores com cadência fixa no gfxcapture, limites de threads e cópias, demanda seletiva de áudio/vídeo, áudio em blocos de 20 ms e recuperação de keyframe sem reinícios repetidos do encoder.'
+          zip -9 AKTela-Capture-v2.9.0-Windows-x64.zip AKTela-Capture.exe
+          sha256sum AKTela-Capture.exe AKTela-Capture-v2.9.0-Windows-x64.zip > SHA256SUMS.txt
+          gh release create v2.9.0 AKTela-Capture.exe AKTela-Capture-v2.9.0-Windows-x64.zip SHA256SUMS.txt --target "$COMMIT_SHA" --title 'AKTela Capture 2.9.0' --notes 'Recupera a qualidade após sobrecarga, amplia captura e escala direta na GPU via Media Foundation e acompanha a qualidade conforme as telas assistidas. A atividade mantém o áudio durante ajustes, preserva o player ao destacar uma tela e processa vídeo em worker.'
